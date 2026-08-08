@@ -102,8 +102,10 @@ if [ -x "$INIT_DST" ]; then
     "$INIT_DST" stop >/dev/null 2>&1 || true
 fi
 
-install -m 0755 "$TMP_WORKER" "$WORKER_DST" || fail "Failed to install ${WORKER_DST}."
-install -m 0755 "$TMP_INIT" "$INIT_DST" || fail "Failed to install ${INIT_DST}."
+cp "$TMP_WORKER" "$WORKER_DST" || fail "Failed to copy ${WORKER_DST}."
+chmod 0755 "$WORKER_DST" || fail "Failed to set permissions on ${WORKER_DST}."
+cp "$TMP_INIT" "$INIT_DST" || fail "Failed to copy ${INIT_DST}."
+chmod 0755 "$INIT_DST" || fail "Failed to set permissions on ${INIT_DST}."
 
 # Keep the first installation safe: no automatic switching until the user has
 # manually verified discovery and health checks on the router.
