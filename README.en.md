@@ -70,7 +70,7 @@ The current installer is intended for OpenWrt systems using `opkg`. Podkop must 
 
 ## Installation
 
-Using the OpenWrt `uclient-fetch` utility:
+If `uclient-fetch` is available on the router:
 
 ```sh
 uclient-fetch -q -O /tmp/pvf-install.sh \
@@ -85,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/in
   -o /tmp/pvf-install.sh && sh /tmp/pvf-install.sh
 ```
 
-The installer can install `curl` when needed, optionally installs/configures `luci-app-commands`, and adds the procd service.
+The installer can install `curl` when needed, installs/configures `luci-app-commands` by default, and adds the procd service.
 
 ### First install
 
@@ -180,7 +180,7 @@ This project currently targets the original use case:
 - settings are built into the shell script;
 - installer targets `opkg`.
 
-Support for multiple independent health-check endpoints is kept as a possible future improvement.
+Support for multiple independent health-check endpoints is tracked as a [possible future improvement](https://github.com/SVTagan/podkop-vpn-failover/issues/3).
 
 ## Tested behavior
 
