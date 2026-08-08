@@ -1,6 +1,9 @@
 #!/bin/sh
 
 INIT="/etc/init.d/podkop-vpn-failover"
+STATE_DIR="/tmp/podkop-vpn-failover"
+LOCK_DIR="/tmp/podkop-vpn-failover.lock"
+PID_FILE="${STATE_DIR}/pid"
 
 fail() {
     printf '[ERROR] %s\n' "$*" >&2
@@ -9,18 +12,42 @@ fail() {
 
 [ -x "$INIT" ] || fail "Failover init service was not found at ${INIT}."
 
+cleanup_stale_lock() {
+    local pid=""
+
+    [ -r "$PID_FILE" ] && pid="$(cat "$PID_FILE" 2>/dev/null)"
+
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    rm -f "$PID_FILE"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+    return 0
+}
+
 case "${1:-}" in
     start)
         "$INIT" enable || fail "Failed to enable failover autostart."
+
+        if "$INIT" running >/dev/null 2>&1; then
+            printf 'Failover service is already running; autostart enabled.\n'
+            exit 0
+        fi
+
+        cleanup_stale_lock || fail "A failover daemon process is still running."
         "$INIT" start || fail "Failed to start failover service."
         printf 'Failover service enabled and started.\n'
         ;;
     restart)
-        "$INIT" restart || fail "Failed to restart failover service."
+        "$INIT" stop || fail "Failed to stop failover service."
+        cleanup_stale_lock || fail "Old failover daemon is still running after stop."
+        "$INIT" start || fail "Failed to start failover service."
         printf 'Failover service restarted.\n'
         ;;
     stop)
         "$INIT" stop || fail "Failed to stop failover service."
+        cleanup_stale_lock || fail "Failover daemon is still running after stop."
         "$INIT" disable || fail "Failed to disable failover autostart."
         printf 'Failover service stopped and disabled.\n'
         ;;
