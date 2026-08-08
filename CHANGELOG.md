@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.1 - 2026-08-08
+
+Hardening release after live failover testing on the target router.
+
+- Verified automatic failover in both directions (`awg0 -> awg0_2` and `awg0_2 -> awg0`) while the failed interface remained administratively up.
+- Added a LuCI-safe service control wrapper for compound start/stop actions.
+- Fixed duplicate procd log capture and false `daemon.err` entries.
+- Added a procd termination timeout so restart can shut the sleeping worker down cleanly.
+- Added stale daemon-lock recovery after abnormal termination.
+- Reset the failure counter when Podkop's active VPN is changed externally.
+- Abort an in-progress automatic switch if Podkop's interface is changed externally.
+- Treat a deleted or no-longer-AmneziaWG active `awg*` interface as a failover condition instead of remaining idle forever.
+- Keep failover idle when Podkop is not in `vpn` connection mode.
+- Clear quarantine when the currently active interface proves healthy again.
+- Improved status output with Podkop connection mode and empty-pool reporting.
+- Hardened the installer with shell syntax validation, an explicit `cut` dependency check, and best-effort handling of partial `opkg update` feed failures.
+- Preserve running/stopped and autostart state when updating an existing installation; first installation remains stopped and disabled by default.
+- Fixed package-state detection for both `install ok installed` and `install user installed` opkg states.
+- Updated uninstall handling for the control wrapper.
+- Expanded README with tested behavior, update semantics, runtime-state details and current limitations.
+- Added GitHub Actions shell syntax validation.
+
 ## 0.1.0 - 2026-08-08
 
 Initial development release.

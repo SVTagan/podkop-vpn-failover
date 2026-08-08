@@ -1,0 +1,23 @@
+name: Validate shell scripts
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: POSIX shell syntax
+        run: |
+          sh -n podkop-vpn-failover
+          sh -n podkop-vpn-failover-control
+          sh -n podkop-vpn-failover.init
+          sh -n install.sh
+          sh -n uninstall.sh

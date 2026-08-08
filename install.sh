@@ -62,7 +62,9 @@ fi
 
 if [ "$need_opkg_update" -eq 1 ]; then
     info "Updating opkg package lists..."
-    opkg update || fail "opkg update failed."
+    if ! opkg update; then
+        warn "opkg update reported errors; continuing with any package lists that are available."
+    fi
 fi
 
 if ! pkg_installed curl; then
@@ -73,6 +75,7 @@ fi
 command -v logger >/dev/null 2>&1 || fail "logger is required."
 command -v awk >/dev/null 2>&1 || fail "awk is required."
 command -v sort >/dev/null 2>&1 || fail "sort is required."
+command -v cut >/dev/null 2>&1 || fail "cut is required."
 command -v sed >/dev/null 2>&1 || fail "sed is required."
 command -v grep >/dev/null 2>&1 || fail "grep is required."
 
@@ -84,7 +87,7 @@ fi
 
 connection_type="$(uci -q get podkop.main.connection_type 2>/dev/null)"
 if [ "$connection_type" != "vpn" ]; then
-    warn "podkop.main.connection_type is '${connection_type:-unset}', not 'vpn'. The service will stay idle unless Podkop main uses VPN mode."
+    warn "podkop.main.connection_type is '${connection_type:-unset}', not 'vpn'. The failover daemon will stay idle until Podkop main uses VPN mode."
 fi
 
 TMP_WORKER="/tmp/${TAG}.worker.$$"
@@ -105,8 +108,22 @@ fetch "${BASE_URL}/podkop-vpn-failover.init" "$TMP_INIT" || fail "Failed to down
 [ -s "$TMP_CONTROL" ] || fail "Downloaded control wrapper is empty."
 [ -s "$TMP_INIT" ] || fail "Downloaded init script is empty."
 
-# Stop an older running copy before replacing files. Do not enable or start it.
+# Refuse to replace working files with syntactically invalid shell scripts.
+/bin/sh -n "$TMP_WORKER" || fail "Downloaded worker failed shell syntax validation."
+/bin/sh -n "$TMP_CONTROL" || fail "Downloaded control wrapper failed shell syntax validation."
+/bin/sh -n "$TMP_INIT" || fail "Downloaded init script failed shell syntax validation."
+
+grep -q '^# podkop-vpn-failover$' "$TMP_WORKER" || fail "Downloaded worker does not look like podkop-vpn-failover."
+
+existing_install=0
+was_running=0
+was_enabled=0
+
 if [ -x "$INIT_DST" ]; then
+    existing_install=1
+    "$INIT_DST" running >/dev/null 2>&1 && was_running=1
+    "$INIT_DST" enabled >/dev/null 2>&1 && was_enabled=1
+    info "Stopping existing failover service before update..."
     "$INIT_DST" stop >/dev/null 2>&1 || true
 fi
 
@@ -116,11 +133,6 @@ cp "$TMP_CONTROL" "$CONTROL_DST" || fail "Failed to copy ${CONTROL_DST}."
 chmod 0755 "$CONTROL_DST" || fail "Failed to set permissions on ${CONTROL_DST}."
 cp "$TMP_INIT" "$INIT_DST" || fail "Failed to copy ${INIT_DST}."
 chmod 0755 "$INIT_DST" || fail "Failed to set permissions on ${INIT_DST}."
-
-# Keep installation safe: no automatic switching until the user has manually
-# verified discovery and health checks on the router.
-"$INIT_DST" disable >/dev/null 2>&1 || true
-"$INIT_DST" stop >/dev/null 2>&1 || true
 
 if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     if ! pkg_installed luci-app-commands; then
@@ -152,21 +164,57 @@ if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     uci commit luci
 fi
 
+if [ "$existing_install" -eq 1 ]; then
+    if [ "$was_enabled" -eq 1 ]; then
+        "$INIT_DST" enable >/dev/null 2>&1 || fail "Failed to restore failover autostart state."
+    else
+        "$INIT_DST" disable >/dev/null 2>&1 || true
+    fi
+
+    if [ "$was_running" -eq 1 ]; then
+        info "Restoring running failover service..."
+        "$CONTROL_DST" restart >/dev/null 2>&1 || fail "Updated files were installed, but the failover service could not be restarted."
+    else
+        "$INIT_DST" stop >/dev/null 2>&1 || true
+    fi
+else
+    # First installation is deliberately safe: no automatic switching until
+    # interface discovery and health checks have been verified by the user.
+    "$INIT_DST" disable >/dev/null 2>&1 || true
+    "$INIT_DST" stop >/dev/null 2>&1 || true
+fi
+
 rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT"
 trap - EXIT INT TERM
 
 info "Installed ${TAG}."
 printf '\n'
-printf 'Safety state after installation:\n'
-printf '  Service:   STOPPED\n'
-printf '  Autostart: DISABLED\n'
-printf '\n'
-printf 'Verify before enabling failover:\n'
-printf '  /usr/bin/podkop-vpn-failover test\n'
-printf '  /usr/bin/podkop-vpn-failover status\n'
-printf '\n'
-printf 'When verification is complete:\n'
-printf '  /usr/bin/podkop-vpn-failover-control start\n'
+
+if [ "$existing_install" -eq 1 ]; then
+    printf 'Update state preserved:\n'
+    if [ "$was_running" -eq 1 ]; then
+        printf '  Service:   RUNNING\n'
+    else
+        printf '  Service:   STOPPED\n'
+    fi
+    if [ "$was_enabled" -eq 1 ]; then
+        printf '  Autostart: ENABLED\n'
+    else
+        printf '  Autostart: DISABLED\n'
+    fi
+else
+    printf 'Safety state after first installation:\n'
+    printf '  Service:   STOPPED\n'
+    printf '  Autostart: DISABLED\n'
+    printf '\n'
+    printf 'Verify before enabling failover:\n'
+    printf '  /usr/bin/podkop-vpn-failover test\n'
+    printf '  /usr/bin/podkop-vpn-failover status\n'
+    printf '\n'
+    printf 'When verification is complete:\n'
+    printf '  /usr/bin/podkop-vpn-failover-control start\n'
+fi
+
 printf '\n'
 if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     printf 'The same actions are available in LuCI -> System -> Custom Commands.\n'
