@@ -66,14 +66,17 @@ Default behavior:
 - no switching based on latency;
 - Podkop `main-out` binding and VPN health are verified after a switch.
 
-Additional safeguards in v0.1.1:
+Additional safeguards:
 
 - if Podkop is changed from `vpn` mode to another connection type, failover becomes idle and does not modify Podkop;
 - a manual change of `podkop.main.interface` resets the accumulated failure counter;
 - if the active `awg*` interface is deleted or stops being an AmneziaWG interface, that condition is treated as a failure and reserves are tried after the normal failure threshold;
 - a manual Podkop interface change during an in-progress failover aborts the automatic switch instead of overwriting the external choice;
 - stale daemon locks left by an abnormal process termination are recovered automatically;
-- service restart has a procd termination timeout long enough for the worker to leave its health-check sleep and clean up normally.
+- service restart has a procd termination timeout long enough for the worker to leave its health-check sleep and clean up normally;
+- v0.1.2 adds a 120-second startup grace period during which automatic failover is disabled, allowing OpenWrt, Podkop and VPN interfaces to settle after boot or service start;
+- if `/etc/init.d/podkop running` reports that Podkop itself is stopped, the failover daemon stays idle and does not misclassify a Podkop failure as a VPN failure;
+- if a complete VPN-pool scan finds no healthy reserve, another full pool scan is delayed for 300 seconds; the currently selected VPN is still probed every 30 seconds so self-recovery is noticed quickly.
 
 Current built-in settings can be displayed with:
 
@@ -169,7 +172,7 @@ or:
 logread | grep podkop-vpn-failover
 ```
 
-No persistent log file is written to flash. Runtime state, quarantine information and the last-switch record live under `/tmp`, so they are intentionally lost on reboot.
+No persistent log file is written to flash. Runtime state, quarantine information, the last-switch record and the temporary no-reserve retry deadline live under `/tmp`, so they are intentionally lost on reboot.
 
 ## Uninstall
 
@@ -210,7 +213,8 @@ The core failover path has been exercised on the target Cudy router with both VP
 - no automatic switch-back after the failed VPN recovers;
 - failover in both directions;
 - procd autostart and restart behavior;
-- LuCI Custom Commands operation.
+- LuCI Custom Commands operation;
+- service autostart after a real router reboot. The pre-v0.1.2 reboot test also showed one transient failed VPN probe immediately after boot, which motivated the startup grace period.
 
 A small GitHub Actions workflow also performs shell syntax validation for project scripts on pushes and pull requests.
 
