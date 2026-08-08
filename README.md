@@ -74,8 +74,8 @@ Additional safeguards:
 - a manual Podkop interface change during an in-progress failover aborts the automatic switch instead of overwriting the external choice;
 - stale daemon locks left by an abnormal process termination are recovered automatically;
 - service restart has a procd termination timeout long enough for the worker to leave its health-check sleep and clean up normally;
-- v0.1.2 adds a 120-second startup grace period during which automatic failover is disabled, allowing OpenWrt, Podkop and VPN interfaces to settle after boot or service start;
-- if `/etc/init.d/podkop running` reports that Podkop itself is stopped, the failover daemon stays idle and does not misclassify a Podkop failure as a VPN failure;
+- a 120-second startup grace period disables automatic failover while OpenWrt, Podkop and VPN interfaces settle after boot or failover-service restart;
+- Podkop runtime readiness is determined by a running sing-box init service plus a readable generated `/etc/sing-box/config.json`; if that runtime is not ready, failover stays idle instead of treating the condition as a VPN failure;
 - if a complete VPN-pool scan finds no healthy reserve, another full pool scan is delayed for 300 seconds; the currently selected VPN is still probed every 30 seconds so self-recovery is noticed quickly.
 
 Current built-in settings can be displayed with:
@@ -214,7 +214,8 @@ The core failover path has been exercised on the target Cudy router with both VP
 - failover in both directions;
 - procd autostart and restart behavior;
 - LuCI Custom Commands operation;
-- service autostart after a real router reboot. The pre-v0.1.2 reboot test also showed one transient failed VPN probe immediately after boot, which motivated the startup grace period.
+- service autostart after a real router reboot. The pre-v0.1.2 reboot test also showed one transient failed VPN probe immediately after boot, which motivated the startup grace period;
+- Podkop runtime readiness on the target router is correctly represented by sing-box running with a generated sing-box config, rather than by `/etc/init.d/podkop running`.
 
 A small GitHub Actions workflow also performs shell syntax validation for project scripts on pushes and pull requests.
 
