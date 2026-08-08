@@ -5,6 +5,7 @@ set -u
 TAG="podkop-vpn-failover"
 BASE_URL="${PVF_BASE_URL:-https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main}"
 WORKER_DST="/usr/bin/podkop-vpn-failover"
+CONTROL_DST="/usr/bin/podkop-vpn-failover-control"
 INIT_DST="/etc/init.d/podkop-vpn-failover"
 INSTALL_LUCI_COMMANDS="${INSTALL_LUCI_COMMANDS:-1}"
 
@@ -87,16 +88,21 @@ if [ "$connection_type" != "vpn" ]; then
 fi
 
 TMP_WORKER="/tmp/${TAG}.worker.$$"
+TMP_CONTROL="/tmp/${TAG}.control.$$"
 TMP_INIT="/tmp/${TAG}.init.$$"
-trap 'rm -f "$TMP_WORKER" "$TMP_INIT"' EXIT INT TERM
+trap 'rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT"' EXIT INT TERM
 
 info "Downloading worker..."
 fetch "${BASE_URL}/podkop-vpn-failover" "$TMP_WORKER" || fail "Failed to download worker from ${BASE_URL}."
+
+info "Downloading service control wrapper..."
+fetch "${BASE_URL}/podkop-vpn-failover-control" "$TMP_CONTROL" || fail "Failed to download control wrapper from ${BASE_URL}."
 
 info "Downloading procd init script..."
 fetch "${BASE_URL}/podkop-vpn-failover.init" "$TMP_INIT" || fail "Failed to download init script from ${BASE_URL}."
 
 [ -s "$TMP_WORKER" ] || fail "Downloaded worker is empty."
+[ -s "$TMP_CONTROL" ] || fail "Downloaded control wrapper is empty."
 [ -s "$TMP_INIT" ] || fail "Downloaded init script is empty."
 
 # Stop an older running copy before replacing files. Do not enable or start it.
@@ -106,11 +112,13 @@ fi
 
 cp "$TMP_WORKER" "$WORKER_DST" || fail "Failed to copy ${WORKER_DST}."
 chmod 0755 "$WORKER_DST" || fail "Failed to set permissions on ${WORKER_DST}."
+cp "$TMP_CONTROL" "$CONTROL_DST" || fail "Failed to copy ${CONTROL_DST}."
+chmod 0755 "$CONTROL_DST" || fail "Failed to set permissions on ${CONTROL_DST}."
 cp "$TMP_INIT" "$INIT_DST" || fail "Failed to copy ${INIT_DST}."
 chmod 0755 "$INIT_DST" || fail "Failed to set permissions on ${INIT_DST}."
 
-# Keep the first installation safe: no automatic switching until the user has
-# manually verified discovery and health checks on the router.
+# Keep installation safe: no automatic switching until the user has manually
+# verified discovery and health checks on the router.
 "$INIT_DST" disable >/dev/null 2>&1 || true
 "$INIT_DST" stop >/dev/null 2>&1 || true
 
@@ -138,15 +146,13 @@ if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     configure_luci_command pvf_test    'VPN Failover: Test all VPNs'   '/usr/bin/podkop-vpn-failover test'
     configure_luci_command pvf_logs    'VPN Failover: Logs'            '/usr/bin/podkop-vpn-failover logs'
     configure_luci_command pvf_config  'VPN Failover: Show settings'   '/usr/bin/podkop-vpn-failover config'
-    # luci-app-commands executes an argv-style command and does not interpret
-    # shell metacharacters such as ';'. Use an explicit shell for compound actions.
-    configure_luci_command pvf_start   'VPN Failover: Enable + Start'  "/bin/sh -c '/etc/init.d/podkop-vpn-failover enable; /etc/init.d/podkop-vpn-failover start'"
-    configure_luci_command pvf_restart 'VPN Failover: Restart'         '/etc/init.d/podkop-vpn-failover restart'
-    configure_luci_command pvf_stop    'VPN Failover: Stop + Disable'  "/bin/sh -c '/etc/init.d/podkop-vpn-failover stop; /etc/init.d/podkop-vpn-failover disable'"
+    configure_luci_command pvf_start   'VPN Failover: Enable + Start'  '/usr/bin/podkop-vpn-failover-control start'
+    configure_luci_command pvf_restart 'VPN Failover: Restart'         '/usr/bin/podkop-vpn-failover-control restart'
+    configure_luci_command pvf_stop    'VPN Failover: Stop + Disable'  '/usr/bin/podkop-vpn-failover-control stop'
     uci commit luci
 fi
 
-rm -f "$TMP_WORKER" "$TMP_INIT"
+rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT"
 trap - EXIT INT TERM
 
 info "Installed ${TAG}."
@@ -160,8 +166,7 @@ printf '  /usr/bin/podkop-vpn-failover test\n'
 printf '  /usr/bin/podkop-vpn-failover status\n'
 printf '\n'
 printf 'When verification is complete:\n'
-printf '  /etc/init.d/podkop-vpn-failover enable\n'
-printf '  /etc/init.d/podkop-vpn-failover start\n'
+printf '  /usr/bin/podkop-vpn-failover-control start\n'
 printf '\n'
 if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     printf 'The same actions are available in LuCI -> System -> Custom Commands.\n'
