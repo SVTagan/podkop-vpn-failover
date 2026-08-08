@@ -5,7 +5,7 @@
 Hardening release after live failover testing on the target router.
 
 - Verified automatic failover in both directions (`awg0 -> awg0_2` and `awg0_2 -> awg0`) while the failed interface remained administratively up.
-- Added a LuCI-safe service control wrapper for compound start/stop actions.
+- Added a LuCI-safe service control wrapper for compound start/stop actions and explicit post-start running-state verification.
 - Fixed duplicate procd log capture and false `daemon.err` entries.
 - Added a procd termination timeout so restart can shut the sleeping worker down cleanly.
 - Added stale daemon-lock recovery after abnormal termination.
