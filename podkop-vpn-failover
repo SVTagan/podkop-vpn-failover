@@ -3,7 +3,7 @@
 # podkop-vpn-failover
 # Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 TAG="podkop-vpn-failover"
 
 # Interfaces are discovered automatically from /etc/config/network.
@@ -32,6 +32,7 @@ PID_FILE="${STATE_DIR}/pid"
 FAIL_FILE="${STATE_DIR}/failures"
 LAST_SWITCH_FILE="${STATE_DIR}/last-switch"
 SING_BOX_CONFIG="/etc/sing-box/config.json"
+INIT_SERVICE="/etc/init.d/podkop-vpn-failover"
 
 PROBE_HTTP="000"
 PROBE_TIME="0"
@@ -53,8 +54,17 @@ ensure_state_dir() {
     [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
 }
 
+reset_failure_counter() {
+    ensure_state_dir
+    printf '0\n' > "$FAIL_FILE"
+}
+
 now_epoch() {
     date +%s
+}
+
+get_connection_type() {
+    uci -q get podkop.main.connection_type 2>/dev/null
 }
 
 get_current_interface() {
@@ -214,7 +224,13 @@ restore_interface() {
 }
 
 switch_to_interface() {
-    local from="$1" to="$2"
+    local from="$1" to="$2" current
+
+    current="$(get_current_interface)"
+    if [ "$current" != "$from" ]; then
+        log_msg notice "Podkop VPN changed externally (${from} -> ${current:-unset}); aborting failover candidate ${to}"
+        return 2
+    fi
 
     log_msg notice "Switching Podkop VPN: ${from} -> ${to}"
 
@@ -232,6 +248,12 @@ switch_to_interface() {
 
     sleep "$POST_SWITCH_DELAY"
 
+    current="$(get_current_interface)"
+    if [ "$current" != "$to" ]; then
+        log_msg notice "Podkop VPN changed externally during failover (${to} -> ${current:-unset}); leaving external selection untouched"
+        return 2
+    fi
+
     if ! verify_podkop_binding "$to"; then
         log_msg err "Podkop did not bind main-out to ${to}; restoring ${from}"
         restore_interface "$from" >/dev/null 2>&1
@@ -240,6 +262,11 @@ switch_to_interface() {
     fi
 
     if ! candidate_is_healthy "$to"; then
+        current="$(get_current_interface)"
+        if [ "$current" != "$to" ]; then
+            log_msg notice "Podkop VPN changed externally during post-switch check (${to} -> ${current:-unset}); leaving external selection untouched"
+            return 2
+        fi
         log_msg err "Post-switch health-check failed for ${to}; restoring ${from}"
         restore_interface "$from" >/dev/null 2>&1
         mark_quarantine "$to"
@@ -253,10 +280,16 @@ switch_to_interface() {
 }
 
 try_candidates_pass() {
-    local failed="$1" pass="$2" iface quarantined
+    local failed="$1" pass="$2" iface quarantined rc current
 
     for iface in $(discover_interfaces); do
         [ "$iface" = "$failed" ] && continue
+
+        current="$(get_current_interface)"
+        if [ "$current" != "$failed" ]; then
+            log_msg notice "Podkop VPN changed externally (${failed} -> ${current:-unset}); aborting failover scan"
+            return 2
+        fi
 
         quarantined=0
         is_quarantined "$iface" && quarantined=1
@@ -271,9 +304,10 @@ try_candidates_pass() {
         log_msg notice "Testing failover candidate ${iface}"
         if candidate_is_healthy "$iface"; then
             log_msg notice "Candidate ${iface} passed ${CANDIDATE_SUCCESS_THRESHOLD} health-check(s)"
-            if switch_to_interface "$failed" "$iface"; then
-                return 0
-            fi
+            switch_to_interface "$failed" "$iface"
+            rc=$?
+            [ "$rc" -eq 0 ] && return 0
+            [ "$rc" -eq 2 ] && return 2
         else
             log_msg warning "Candidate ${iface} is unhealthy (curl=${PROBE_RC}, HTTP=${PROBE_HTTP})"
             mark_quarantine "$iface"
@@ -284,41 +318,64 @@ try_candidates_pass() {
 }
 
 perform_failover() {
-    local failed="$1"
+    local failed="$1" rc
 
-    mark_quarantine "$failed"
+    is_discovered_interface "$failed" && mark_quarantine "$failed"
 
-    if try_candidates_pass "$failed" normal; then
-        return 0
-    fi
+    try_candidates_pass "$failed" normal
+    rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    [ "$rc" -eq 2 ] && return 2
 
     log_msg warning "No healthy non-quarantined reserve found; testing quarantined reserves as last resort"
-    if try_candidates_pass "$failed" quarantined; then
-        return 0
-    fi
+    try_candidates_pass "$failed" quarantined
+    rc=$?
+    [ "$rc" -eq 0 ] && return 0
+    [ "$rc" -eq 2 ] && return 2
 
     log_msg err "No healthy reserve VPN interface is available"
     return 1
 }
 
 cleanup_daemon() {
+    local owner
+    owner="$(cat "$PID_FILE" 2>/dev/null)"
+    [ "$owner" = "$$" ] || return 0
     rm -f "$PID_FILE"
-    rmdir "$LOCK_DIR" 2>/dev/null
+    rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
 acquire_daemon_lock() {
+    local old_pid=""
+
     ensure_state_dir
+
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        [ -r "$PID_FILE" ] && old_pid="$(cat "$PID_FILE" 2>/dev/null)"
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            return 1
+        fi
+
+        # The previous daemon may have been killed before its EXIT trap ran.
+        # Remove only a lock whose recorded PID is no longer alive, then retry.
+        rm -f "$PID_FILE"
+        rmdir "$LOCK_DIR" 2>/dev/null || return 1
+        mkdir "$LOCK_DIR" 2>/dev/null || return 1
+        log_msg notice "Removed stale daemon lock"
+    fi
+
+    if ! printf '%s\n' "$$" > "$PID_FILE"; then
+        rmdir "$LOCK_DIR" 2>/dev/null || true
         return 1
     fi
-    printf '%s\n' "$$" > "$PID_FILE"
+
     trap 'cleanup_daemon; exit 0' INT TERM
     trap 'cleanup_daemon' EXIT
     return 0
 }
 
 run_daemon() {
-    local current failures=0
+    local mode current previous_current="" failures=0 rc idle_reason=""
 
     FOREGROUND=1
 
@@ -327,16 +384,33 @@ run_daemon() {
         exit 1
     fi
 
-    printf '0\n' > "$FAIL_FILE"
+    reset_failure_counter
     log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} URL=${TEST_URL}"
 
     while :; do
+        mode="$(get_connection_type)"
+        if [ "$mode" != "vpn" ]; then
+            failures=0
+            previous_current=""
+            reset_failure_counter
+            if [ "$idle_reason" != "mode:${mode:-unset}" ]; then
+                log_msg warning "Podkop connection type is '${mode:-unset}', not 'vpn'; failover is idle"
+                idle_reason="mode:${mode:-unset}"
+            fi
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
         current="$(get_current_interface)"
 
         if [ -z "$current" ]; then
             failures=0
-            printf '0\n' > "$FAIL_FILE"
-            log_msg err "Podkop main interface is not configured"
+            previous_current=""
+            reset_failure_counter
+            if [ "$idle_reason" != "interface:unset" ]; then
+                log_msg err "Podkop main interface is not configured"
+                idle_reason="interface:unset"
+            fi
             sleep "$CHECK_INTERVAL"
             continue
         fi
@@ -345,27 +419,52 @@ run_daemon() {
             "${INTERFACE_PREFIX}"*) ;;
             *)
                 failures=0
-                printf '0\n' > "$FAIL_FILE"
-                log_msg warning "Podkop main interface '${current}' does not match ${INTERFACE_PREFIX}*; failover is idle"
+                previous_current=""
+                reset_failure_counter
+                if [ "$idle_reason" != "interface:${current}" ]; then
+                    log_msg warning "Podkop main interface '${current}' does not match ${INTERFACE_PREFIX}*; failover is idle"
+                    idle_reason="interface:${current}"
+                fi
                 sleep "$CHECK_INTERVAL"
                 continue
                 ;;
         esac
 
-        if ! is_discovered_interface "$current"; then
+        idle_reason=""
+
+        if [ -n "$previous_current" ] && [ "$current" != "$previous_current" ]; then
+            log_msg notice "Podkop active VPN changed outside failover: ${previous_current} -> ${current}; resetting failure counter"
             failures=0
-            printf '0\n' > "$FAIL_FILE"
-            log_msg warning "Podkop main interface '${current}' is not a configured AmneziaWG ${INTERFACE_PREFIX}* interface; failover is idle"
+            reset_failure_counter
+        fi
+        previous_current="$current"
+
+        if ! is_discovered_interface "$current"; then
+            failures=$((failures + 1))
+            printf '%s\n' "$failures" > "$FAIL_FILE"
+            log_msg warning "Podkop VPN interface '${current}' is missing or is no longer AmneziaWG: ${failures}/${FAIL_THRESHOLD}"
+
+            if [ "$failures" -ge "$FAIL_THRESHOLD" ]; then
+                log_msg err "Confirmed unavailable Podkop VPN interface ${current}; starting failover"
+                perform_failover "$current"
+                rc=$?
+                failures=0
+                reset_failure_counter
+                previous_current="$(get_current_interface)"
+                [ "$rc" -eq 2 ] && log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+            fi
+
             sleep "$CHECK_INTERVAL"
             continue
         fi
 
         if probe_interface "$current"; then
+            clear_quarantine "$current"
             if [ "$failures" -gt 0 ]; then
                 log_msg notice "${current} recovered after ${failures} failed health-check(s)"
             fi
             failures=0
-            printf '0\n' > "$FAIL_FILE"
+            reset_failure_counter
         else
             failures=$((failures + 1))
             printf '%s\n' "$failures" > "$FAIL_FILE"
@@ -373,14 +472,12 @@ run_daemon() {
 
             if [ "$failures" -ge "$FAIL_THRESHOLD" ]; then
                 log_msg err "Confirmed VPN failure on ${current}; starting failover"
-                if perform_failover "$current"; then
-                    failures=0
-                    printf '0\n' > "$FAIL_FILE"
-                else
-                    # Require a fresh set of failures before scanning all reserves again.
-                    failures=0
-                    printf '0\n' > "$FAIL_FILE"
-                fi
+                perform_failover "$current"
+                rc=$?
+                failures=0
+                reset_failure_counter
+                previous_current="$(get_current_interface)"
+                [ "$rc" -eq 2 ] && log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
             fi
         fi
 
@@ -389,22 +486,25 @@ run_daemon() {
 }
 
 service_running() {
-    local pid
-    [ -r "$PID_FILE" ] || return 1
-    pid="$(cat "$PID_FILE" 2>/dev/null)"
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+    "$INIT_SERVICE" running >/dev/null 2>&1
 }
 
 service_enabled() {
-    /etc/init.d/podkop-vpn-failover enabled >/dev/null 2>&1
+    "$INIT_SERVICE" enabled >/dev/null 2>&1
 }
 
 print_interfaces() {
-    local current iface state marker quarantine
+    local current iface state marker quarantine interfaces
     current="$(get_current_interface)"
+    interfaces="$(discover_interfaces)"
 
     say "Interface health:"
-    for iface in $(discover_interfaces); do
+    if [ -z "$interfaces" ]; then
+        say "  no AmneziaWG ${INTERFACE_PREFIX}* interfaces discovered"
+        return 0
+    fi
+
+    for iface in $interfaces; do
         marker=""
         [ "$iface" = "$current" ] && marker=" ACTIVE"
 
@@ -422,9 +522,10 @@ print_interfaces() {
 }
 
 show_status() {
-    local current failures
+    local mode current failures
     ensure_state_dir
 
+    mode="$(get_connection_type)"
     current="$(get_current_interface)"
     failures="$(cat "$FAIL_FILE" 2>/dev/null)"
     [ -n "$failures" ] || failures=0
@@ -442,6 +543,7 @@ show_status() {
         say "Autostart: disabled"
     fi
 
+    say "Podkop connection type: ${mode:-not configured}"
     say "Current Podkop VPN: ${current:-not configured}"
     say "Failure counter: ${failures}/${FAIL_THRESHOLD}"
     say "Health URL: ${TEST_URL}"
@@ -489,7 +591,7 @@ Usage: $0 COMMAND
 
 Commands:
   daemon       Run the continuous health-check/failover loop (used by procd)
-  status       Show service state, current Podkop VPN and live interface health
+  status       Show service state, Podkop mode, current VPN and live interface health
   test         Run a live health-check for all discovered awg* interfaces
   check IFACE  Check one interface; returns 0 only for HTTP 204
   logs         Show the latest failover log entries
