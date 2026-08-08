@@ -48,7 +48,9 @@ fetch() {
 }
 
 pkg_installed() {
-    opkg status "$1" 2>/dev/null | grep -q '^Status: install ok installed$'
+    # OpenWrt/opkg may report either "install ok installed" or
+    # "install user installed" depending on how a package was installed.
+    opkg status "$1" 2>/dev/null | grep -q '^Status: install .* installed$'
 }
 
 need_opkg_update=0
