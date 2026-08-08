@@ -3,7 +3,7 @@
 # podkop-vpn-failover
 # Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
 
-VERSION="0.1.2"
+VERSION="0.1.3"
 TAG="podkop-vpn-failover"
 
 # Interfaces are discovered automatically from /etc/config/network.
@@ -44,6 +44,7 @@ NO_RESERVE_UNTIL_FILE="${STATE_DIR}/no-reserve-until"
 SING_BOX_CONFIG="/etc/sing-box/config.json"
 INIT_SERVICE="/etc/init.d/podkop-vpn-failover"
 PODKOP_INIT="/etc/init.d/podkop"
+SING_BOX_INIT="/etc/init.d/sing-box"
 
 PROBE_HTTP="000"
 PROBE_TIME="0"
@@ -74,8 +75,8 @@ now_epoch() {
     date +%s
 }
 
-podkop_running() {
-    "$PODKOP_INIT" running >/dev/null 2>&1
+podkop_runtime_ready() {
+    "$SING_BOX_INIT" running >/dev/null 2>&1 && [ -r "$SING_BOX_CONFIG" ]
 }
 
 get_connection_type() {
@@ -464,14 +465,14 @@ run_daemon() {
             idle_reason=""
         fi
 
-        if ! podkop_running; then
+        if ! podkop_runtime_ready; then
             failures=0
             previous_current=""
             reset_failure_counter
             clear_no_reserve_cooldown
-            if [ "$idle_reason" != "podkop-stopped" ]; then
-                log_msg warning "Podkop service is not running; failover is idle"
-                idle_reason="podkop-stopped"
+            if [ "$idle_reason" != "podkop-runtime-not-ready" ]; then
+                log_msg warning "Podkop runtime is not ready (sing-box stopped or config missing); failover is idle"
+                idle_reason="podkop-runtime-not-ready"
             fi
             sleep "$CHECK_INTERVAL"
             continue
@@ -714,10 +715,10 @@ show_status() {
         say "Autostart: disabled"
     fi
 
-    if podkop_running; then
-        say "Podkop service: running"
+    if podkop_runtime_ready; then
+        say "Podkop runtime: ready"
     else
-        say "Podkop service: stopped"
+        say "Podkop runtime: not ready"
     fi
 
     say "Podkop connection type: ${mode:-not configured}"
