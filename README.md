@@ -1,46 +1,38 @@
 # podkop-vpn-failover
 
-Lightweight health-check and automatic failover service for **Podkop VPN mode** on OpenWrt.
+[English](README.en.md)
 
-The service watches the AmneziaWG interface currently selected in Podkop. If real HTTPS traffic through that tunnel fails repeatedly, it tests reserve `awg*` interfaces and switches Podkop to the first healthy reserve.
+Небольшой shell-скрипт для OpenWrt, который я сделал для своей конфигурации с [Podkop](https://github.com/itdoginfo/podkop).
 
-> Development release. The current implementation has been tested on a Cudy TR3000 v1 running OpenWrt 24.10.5 with Podkop 0.7.21, sing-box 1.12.22 and AmneziaWG. Bidirectional failover (`awg0 -> awg0_2` and `awg0_2 -> awg0`) was verified on the router by blocking the active tunnel transport while leaving the interface itself up.
+Задача простая: в proxy-режиме Podkop умеет проверять несколько прокси через `urltest`, а для нескольких VPN-интерфейсов аналогичного failover нет. Скрипт проверяет, что активный AmneziaWG-туннель действительно пропускает HTTPS-трафик, и при устойчивом отказе переключает Podkop на рабочий резервный `awg*`.
 
-## Design
+Это независимый проект, он не является частью Podkop и не связан с его разработчиками. По вопросам самого Podkop лучше обращаться в [репозиторий Podkop](https://github.com/itdoginfo/podkop) и на [podkop.net](https://podkop.net/).
 
-The project intentionally stays outside Podkop and uses its normal UCI configuration:
+## Что умеет
+
+- автоматически находит интерфейсы `awg*` с протоколом `amneziawg`;
+- считает VPN рабочим только если через него проходит реальный HTTPS-запрос;
+- ждёт 3 ошибки подряд, чтобы не переключаться из-за краткого сбоя;
+- перед переключением дважды проверяет резервный VPN;
+- переключает `podkop.main.interface` и делает штатный reload Podkop;
+- проверяет новый `main-out.bind_interface` и сам туннель после переключения;
+- временно помещает недавно упавший VPN в quarantine;
+- не возвращается автоматически на прежний VPN, пока текущий работает;
+- после полного отказа всего пула не перебирает все VPN непрерывно;
+- имеет 120-секундный grace period после запуска сервиса/роутера;
+- умеет работать через LuCI `System → Custom Commands`, поэтому для обычного использования SSH не нужен.
+
+## Как выбираются VPN
+
+Список резервов вручную задавать не нужно. Скрипт берёт все UCI-интерфейсы с именами `awg*` и протоколом `amneziawg`.
+
+Текущий основной VPN — тот, который сейчас указан в:
 
 ```text
 podkop.main.interface
-        ↓
-Podkop reload
-        ↓
-sing-box main-out
-bind_interface = awgX
 ```
 
-VPN health is checked with a real HTTPS request bound to a specific interface:
-
-```sh
-curl --interface awg0 -4 https://www.gstatic.com/generate_204
-```
-
-A tunnel is healthy only when curl succeeds and the test endpoint returns HTTP `204`. A WireGuard/AmneziaWG handshake alone is not considered sufficient.
-
-## Interface discovery and reserve order
-
-There is no manual VPN list.
-
-The service automatically discovers UCI network interfaces that:
-
-- have a name beginning with `awg`;
-- use the `amneziawg` protocol.
-
-Adding or deleting an `awg*` interface in LuCI therefore automatically changes the failover pool.
-
-The interface currently selected in Podkop is always treated as the active VPN. All other discovered `awg*` interfaces are reserves.
-
-When failover is required, reserves are tested in natural name order, for example:
+Остальные интерфейсы считаются резервами и проверяются в естественном порядке имён, например:
 
 ```text
 awg0
@@ -52,100 +44,99 @@ awg9
 awg10
 ```
 
-The service does **not** automatically switch back to a lower-numbered interface while the current VPN remains healthy. If the current VPN later fails, all eligible reserves are considered again in natural order.
+Если активный VPN позже восстановился, скрипт сам обратно на него не прыгает. Переключение происходит только при отказе текущего VPN.
 
-## Failure handling
+## Как проверяется туннель
 
-Default behavior:
-
-- health-check every 30 seconds;
-- 3 consecutive failures before declaring the current VPN failed;
-- 2 successful checks before a reserve is accepted;
-- recently failed interfaces are quarantined for 180 seconds;
-- quarantined interfaces may still be tested as a last resort when no other reserve is healthy;
-- no switching based on latency;
-- Podkop `main-out` binding and VPN health are verified after a switch.
-
-Additional safeguards:
-
-- if Podkop is changed from `vpn` mode to another connection type, failover becomes idle and does not modify Podkop;
-- a manual change of `podkop.main.interface` resets the accumulated failure counter;
-- if the active `awg*` interface is deleted or stops being an AmneziaWG interface, that condition is treated as a failure and reserves are tried after the normal failure threshold;
-- a manual Podkop interface change during an in-progress failover aborts the automatic switch instead of overwriting the external choice;
-- stale daemon locks left by an abnormal process termination are recovered automatically;
-- service restart has a procd termination timeout long enough for the worker to leave its health-check sleep and clean up normally;
-- a 120-second startup grace period disables automatic failover while OpenWrt, Podkop and VPN interfaces settle after boot or failover-service restart;
-- Podkop runtime readiness is determined by a running sing-box init service plus a readable generated `/etc/sing-box/config.json`; if that runtime is not ready, failover stays idle instead of treating the condition as a VPN failure;
-- if a complete VPN-pool scan finds no healthy reserve, another full pool scan is delayed for 300 seconds; the currently selected VPN is still probed every 30 seconds so self-recovery is noticed quickly.
-
-Current built-in settings can be displayed with:
+Проверяется не handshake AmneziaWG, а реальный HTTP-запрос, привязанный к конкретному интерфейсу:
 
 ```sh
-podkop-vpn-failover config
+curl --interface awg0 -4 https://www.gstatic.com/generate_204
 ```
 
-## Installation
+По умолчанию рабочим считается туннель, через который запрос успешно возвращает HTTP `204`.
 
-The current installer targets OpenWrt 24.10.x and older releases using `opkg`.
+## Требования
+
+Проверено на:
+
+- Cudy TR3000 v1;
+- OpenWrt 24.10.5;
+- Podkop 0.7.21;
+- sing-box 1.12.22;
+- AmneziaWG.
+
+Текущий установщик рассчитан на OpenWrt с `opkg`. Для работы нужен Podkop в VPN-режиме и интерфейсы AmneziaWG с именами `awg*`.
+
+## Установка
+
+На обычном OpenWrt `uclient-fetch` уже есть, поэтому можно начать с него:
+
+```sh
+uclient-fetch -q -O /tmp/pvf-install.sh \
+  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh && \
+sh /tmp/pvf-install.sh
+```
+
+Если `curl` уже установлен:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh \
   -o /tmp/pvf-install.sh && sh /tmp/pvf-install.sh
 ```
 
-The installer:
+Установщик при необходимости поставит `curl`, предложит LuCI-интеграцию через `luci-app-commands` и добавит procd-сервис.
 
-- checks required utilities;
-- installs `curl` if necessary;
-- optionally installs `luci-app-commands`;
-- downloads and syntax-checks the worker, control wrapper and procd init script before replacing installed files;
-- configures LuCI Custom Commands.
+### После первой установки
 
-### First-install safety
-
-On the **first installation**, automatic failover is deliberately left **stopped and disabled**.
-
-First verify discovery and health checks:
+Для безопасности failover оставляется выключенным. Сначала стоит проверить, что интерфейсы обнаруживаются и проходят health-check:
 
 ```sh
 podkop-vpn-failover test
 podkop-vpn-failover status
 ```
 
-Then enable it:
+Затем включить сервис:
 
 ```sh
 podkop-vpn-failover-control start
 ```
 
-### Updating an existing installation
-
-When the installer detects an existing installation, it preserves the previous service state:
-
-- a running service is restarted with the new files;
-- a stopped service remains stopped;
-- the previous autostart state is preserved.
-
-For testing a specific source snapshot, the installer also accepts an alternate base URL through `PVF_BASE_URL`.
+При последующих обновлениях установщик сохраняет состояние сервиса и autostart.
 
 ## LuCI
 
-When `luci-app-commands` is installed/configured, the following actions are available under **System → Custom Commands**:
+Если установлен `luci-app-commands`, в `System → Custom Commands` появляются команды:
 
-- VPN Failover: Status
-- VPN Failover: Test all VPNs
-- VPN Failover: Logs
-- VPN Failover: Show settings
-- VPN Failover: Enable + Start
-- VPN Failover: Restart
-- VPN Failover: Stop + Disable
+- `VPN Failover: Status`
+- `VPN Failover: Test all VPNs`
+- `VPN Failover: Logs`
+- `VPN Failover: Show settings`
+- `VPN Failover: Enable + Start`
+- `VPN Failover: Restart`
+- `VPN Failover: Stop + Disable`
 
-Routine operation therefore does not require SSH. Adding and removing reserve VPNs is done normally through **Network → Interfaces** in LuCI.
+Добавлять и удалять резервные VPN можно обычным способом через `Network → Interfaces`. Скрипт подхватит изменения автоматически.
+
+## Логика по умолчанию
+
+- проверка текущего VPN: каждые 30 секунд;
+- отказ: 3 неудачные проверки подряд;
+- подтверждение резерва: 2 успешные проверки;
+- quarantine упавшего интерфейса: 180 секунд;
+- startup grace period: 120 секунд;
+- после полного провала пула новый полный перебор резервов: через 300 секунд;
+- задержка выбирается не по ping/latency — нужен только факт рабочей передачи трафика.
+
+Текущие значения можно посмотреть командой:
+
+```sh
+podkop-vpn-failover config
+```
 
 ## CLI
 
 ```text
-podkop-vpn-failover daemon
 podkop-vpn-failover status
 podkop-vpn-failover test
 podkop-vpn-failover check awg0
@@ -158,67 +149,47 @@ podkop-vpn-failover-control restart
 podkop-vpn-failover-control stop
 ```
 
-## Logs and state
+## Логи и состояние
 
-Events are written to the OpenWrt system log using the tag `podkop-vpn-failover`:
-
-```sh
-podkop-vpn-failover logs
-```
-
-or:
+События пишутся в обычный системный log OpenWrt с тегом `podkop-vpn-failover`:
 
 ```sh
 logread | grep podkop-vpn-failover
 ```
 
-No persistent log file is written to flash. Runtime state, quarantine information, the last-switch record and the temporary no-reserve retry deadline live under `/tmp`, so they are intentionally lost on reboot.
+Отдельный постоянный лог на flash не создаётся. Runtime-состояние хранится в `/tmp` и после reboot начинается заново.
 
-## Uninstall
+## Удаление
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh \
-  -o /tmp/pvf-uninstall.sh && sh /tmp/pvf-uninstall.sh
+uclient-fetch -q -O /tmp/pvf-uninstall.sh \
+  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
+sh /tmp/pvf-uninstall.sh
 ```
 
-The uninstall script removes the worker, control wrapper, service, runtime state and its LuCI Custom Commands entries. It does not remove `luci-app-commands`, because that package may be used by other tools.
+`luci-app-commands` при удалении не удаляется: он может использоваться другими скриптами.
 
-## Current scope and limitations
+## Ограничения
 
-The current version targets:
+Сейчас проект рассчитан именно на мою исходную задачу:
 
-- OpenWrt 24.10.x / `opkg`;
-- Podkop VPN mode using `podkop.main.interface`;
-- AmneziaWG interfaces named `awg*`;
-- IPv4 application-level health checks.
+- Podkop VPN mode через `podkop.main.interface`;
+- AmneziaWG-интерфейсы `awg*`;
+- IPv4 health-check;
+- один внешний health-check URL — `www.gstatic.com/generate_204`;
+- настройки пока встроены в shell-скрипт, отдельной формы LuCI нет;
+- установщик рассчитан на `opkg`.
 
-Known limitations:
+Поддержка нескольких независимых health-check URL оставлена как отдельная будущая доработка.
 
-- health currently depends on one external HTTP 204 endpoint (`www.gstatic.com`); an outage or policy block affecting that endpoint through every VPN could look like tunnel failure;
-- settings are built into the worker rather than exposed through a dedicated LuCI form;
-- runtime history is intentionally non-persistent;
-- newer OpenWrt releases using `apk`, other tunnel types and notification integrations are not yet supported.
+## Проверка на реальном роутере
 
-## Validation performed
+На Cudy TR3000 v1 тестировался именно отказ передачи данных при остающемся поднятым AWG-интерфейсе: UDP-транспорт активного туннеля блокировался отдельно, после чего failover успешно выполнялся в обе стороны (`awg0 → awg0_2` и обратно).
 
-The core failover path has been exercised on the target Cudy router with both VPNs left administratively up while their UDP transport was selectively blocked. Verified behavior includes:
+Также проверены debounce, подтверждение резерва, quarantine, отсутствие автоматического switch-back, procd/autostart, LuCI-команды и запуск после reboot.
 
-- detection of a tunnel that still exists but cannot pass HTTPS traffic;
-- 3-failure debounce;
-- reserve confirmation with two successful checks;
-- Podkop UCI switch and reload;
-- generated sing-box `main-out.bind_interface` verification;
-- post-switch health verification;
-- quarantine;
-- no automatic switch-back after the failed VPN recovers;
-- failover in both directions;
-- procd autostart and restart behavior;
-- LuCI Custom Commands operation;
-- service autostart after a real router reboot. The pre-v0.1.2 reboot test also showed one transient failed VPN probe immediately after boot, which motivated the startup grace period;
-- Podkop runtime readiness on the target router is correctly represented by sing-box running with a generated sing-box config, rather than by `/etc/init.d/podkop running`.
+История изменений: [CHANGELOG.md](CHANGELOG.md).
 
-A small GitHub Actions workflow also performs shell syntax validation for project scripts on pushes and pull requests.
+## Лицензия
 
-## License
-
-MIT.
+MIT — см. [LICENSE](LICENSE).
