@@ -3,7 +3,7 @@
 # podkop-vpn-failover
 # Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 TAG="podkop-vpn-failover"
 
 # Interfaces are discovered automatically from /etc/config/network.
@@ -21,6 +21,15 @@ CANDIDATE_SUCCESS_THRESHOLD=2
 CANDIDATE_RETRY_DELAY=1
 POST_SWITCH_DELAY=4
 
+# Give OpenWrt, Podkop and the VPN interfaces time to settle after this daemon
+# starts. No automatic failover is allowed during this window.
+STARTUP_GRACE_PERIOD=120
+
+# After a complete reserve scan finds no healthy VPN, avoid repeatedly testing
+# the whole pool. The current VPN may still be probed every CHECK_INTERVAL so a
+# quick self-recovery is noticed without waiting for the full retry interval.
+NO_RESERVE_RETRY_INTERVAL=300
+
 # A recently failed interface is temporarily deprioritized. If no other
 # healthy reserve exists, quarantined interfaces are still tested as a
 # last-resort recovery path.
@@ -31,8 +40,10 @@ LOCK_DIR="/tmp/${TAG}.lock"
 PID_FILE="${STATE_DIR}/pid"
 FAIL_FILE="${STATE_DIR}/failures"
 LAST_SWITCH_FILE="${STATE_DIR}/last-switch"
+NO_RESERVE_UNTIL_FILE="${STATE_DIR}/no-reserve-until"
 SING_BOX_CONFIG="/etc/sing-box/config.json"
 INIT_SERVICE="/etc/init.d/podkop-vpn-failover"
+PODKOP_INIT="/etc/init.d/podkop"
 
 PROBE_HTTP="000"
 PROBE_TIME="0"
@@ -63,12 +74,56 @@ now_epoch() {
     date +%s
 }
 
+podkop_running() {
+    "$PODKOP_INIT" running >/dev/null 2>&1
+}
+
 get_connection_type() {
     uci -q get podkop.main.connection_type 2>/dev/null
 }
 
 get_current_interface() {
     uci -q get podkop.main.interface 2>/dev/null
+}
+
+clear_no_reserve_cooldown() {
+    rm -f "$NO_RESERVE_UNTIL_FILE"
+}
+
+start_no_reserve_cooldown() {
+    local until
+    ensure_state_dir
+    until=$(( $(now_epoch) + NO_RESERVE_RETRY_INTERVAL ))
+    printf '%s\n' "$until" > "$NO_RESERVE_UNTIL_FILE"
+    log_msg warning "No healthy reserve is available; next full VPN-pool scan in ${NO_RESERVE_RETRY_INTERVAL}s"
+}
+
+get_no_reserve_until() {
+    local until
+    [ -r "$NO_RESERVE_UNTIL_FILE" ] || return 1
+
+    until="$(cat "$NO_RESERVE_UNTIL_FILE" 2>/dev/null)"
+    case "$until" in
+        ''|*[!0-9]*)
+            rm -f "$NO_RESERVE_UNTIL_FILE"
+            return 1
+            ;;
+    esac
+
+    printf '%s\n' "$until"
+}
+
+no_reserve_cooldown_remaining() {
+    local until now
+    until="$(get_no_reserve_until)" || return 1
+    now="$(now_epoch)"
+
+    if [ "$now" -lt "$until" ]; then
+        printf '%s\n' "$((until - now))"
+        return 0
+    fi
+
+    return 1
 }
 
 # BusyBox sort does not provide GNU sort -V. Build a sortable key by padding
@@ -220,7 +275,7 @@ restore_interface() {
     local iface="$1"
     uci set "podkop.main.interface=${iface}" || return 1
     uci commit podkop || return 1
-    /etc/init.d/podkop reload >/dev/null 2>&1
+    "$PODKOP_INIT" reload >/dev/null 2>&1
 }
 
 switch_to_interface() {
@@ -239,7 +294,7 @@ switch_to_interface() {
         return 1
     fi
 
-    if ! /etc/init.d/podkop reload >/dev/null 2>&1; then
+    if ! "$PODKOP_INIT" reload >/dev/null 2>&1; then
         log_msg err "Podkop reload failed after selecting ${to}; restoring ${from}"
         restore_interface "$from" >/dev/null 2>&1
         mark_quarantine "$to"
@@ -376,6 +431,7 @@ acquire_daemon_lock() {
 
 run_daemon() {
     local mode current previous_current="" failures=0 rc idle_reason=""
+    local startup_until now cooldown_until
 
     FOREGROUND=1
 
@@ -385,14 +441,48 @@ run_daemon() {
     fi
 
     reset_failure_counter
-    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} URL=${TEST_URL}"
+    clear_no_reserve_cooldown
+    startup_until=$(( $(now_epoch) + STARTUP_GRACE_PERIOD ))
+    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} startup_grace=${STARTUP_GRACE_PERIOD}s no_reserve_retry=${NO_RESERVE_RETRY_INTERVAL}s URL=${TEST_URL}"
 
     while :; do
+        now="$(now_epoch)"
+        if [ "$now" -lt "$startup_until" ]; then
+            failures=0
+            previous_current=""
+            reset_failure_counter
+            if [ "$idle_reason" != "startup-grace" ]; then
+                log_msg notice "Startup grace period active for ${STARTUP_GRACE_PERIOD}s; automatic failover is idle"
+                idle_reason="startup-grace"
+            fi
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
+        if [ "$idle_reason" = "startup-grace" ]; then
+            log_msg notice "Startup grace period ended; VPN monitoring enabled"
+            idle_reason=""
+        fi
+
+        if ! podkop_running; then
+            failures=0
+            previous_current=""
+            reset_failure_counter
+            clear_no_reserve_cooldown
+            if [ "$idle_reason" != "podkop-stopped" ]; then
+                log_msg warning "Podkop service is not running; failover is idle"
+                idle_reason="podkop-stopped"
+            fi
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
         mode="$(get_connection_type)"
         if [ "$mode" != "vpn" ]; then
             failures=0
             previous_current=""
             reset_failure_counter
+            clear_no_reserve_cooldown
             if [ "$idle_reason" != "mode:${mode:-unset}" ]; then
                 log_msg warning "Podkop connection type is '${mode:-unset}', not 'vpn'; failover is idle"
                 idle_reason="mode:${mode:-unset}"
@@ -407,6 +497,7 @@ run_daemon() {
             failures=0
             previous_current=""
             reset_failure_counter
+            clear_no_reserve_cooldown
             if [ "$idle_reason" != "interface:unset" ]; then
                 log_msg err "Podkop main interface is not configured"
                 idle_reason="interface:unset"
@@ -421,6 +512,7 @@ run_daemon() {
                 failures=0
                 previous_current=""
                 reset_failure_counter
+                clear_no_reserve_cooldown
                 if [ "$idle_reason" != "interface:${current}" ]; then
                     log_msg warning "Podkop main interface '${current}' does not match ${INTERFACE_PREFIX}*; failover is idle"
                     idle_reason="interface:${current}"
@@ -436,8 +528,62 @@ run_daemon() {
             log_msg notice "Podkop active VPN changed outside failover: ${previous_current} -> ${current}; resetting failure counter"
             failures=0
             reset_failure_counter
+            clear_no_reserve_cooldown
         fi
         previous_current="$current"
+
+        cooldown_until="$(get_no_reserve_until 2>/dev/null)"
+        if [ -n "$cooldown_until" ]; then
+            now="$(now_epoch)"
+            if [ "$now" -lt "$cooldown_until" ]; then
+                # Avoid a full reserve scan during cooldown, but keep a cheap
+                # probe of the currently selected VPN so self-recovery is
+                # detected within the normal CHECK_INTERVAL.
+                if is_discovered_interface "$current" && probe_interface "$current"; then
+                    log_msg notice "${current} recovered while full reserve scans were paused"
+                    clear_quarantine "$current"
+                    clear_no_reserve_cooldown
+                fi
+                failures=0
+                reset_failure_counter
+                sleep "$CHECK_INTERVAL"
+                continue
+            fi
+
+            clear_no_reserve_cooldown
+
+            if is_discovered_interface "$current" && probe_interface "$current"; then
+                log_msg notice "${current} recovered before the scheduled full VPN-pool retry"
+                clear_quarantine "$current"
+                failures=0
+                reset_failure_counter
+                sleep "$CHECK_INTERVAL"
+                continue
+            fi
+
+            log_msg notice "No-reserve retry interval expired; rescanning the VPN pool"
+            perform_failover "$current"
+            rc=$?
+            failures=0
+            reset_failure_counter
+            previous_current="$(get_current_interface)"
+
+            case "$rc" in
+                0)
+                    clear_no_reserve_cooldown
+                    ;;
+                1)
+                    start_no_reserve_cooldown
+                    ;;
+                2)
+                    clear_no_reserve_cooldown
+                    log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+                    ;;
+            esac
+
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
 
         if ! is_discovered_interface "$current"; then
             failures=$((failures + 1))
@@ -451,7 +597,19 @@ run_daemon() {
                 failures=0
                 reset_failure_counter
                 previous_current="$(get_current_interface)"
-                [ "$rc" -eq 2 ] && log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+
+                case "$rc" in
+                    0)
+                        clear_no_reserve_cooldown
+                        ;;
+                    1)
+                        start_no_reserve_cooldown
+                        ;;
+                    2)
+                        clear_no_reserve_cooldown
+                        log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+                        ;;
+                esac
             fi
 
             sleep "$CHECK_INTERVAL"
@@ -460,6 +618,7 @@ run_daemon() {
 
         if probe_interface "$current"; then
             clear_quarantine "$current"
+            clear_no_reserve_cooldown
             if [ "$failures" -gt 0 ]; then
                 log_msg notice "${current} recovered after ${failures} failed health-check(s)"
             fi
@@ -477,7 +636,19 @@ run_daemon() {
                 failures=0
                 reset_failure_counter
                 previous_current="$(get_current_interface)"
-                [ "$rc" -eq 2 ] && log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+
+                case "$rc" in
+                    0)
+                        clear_no_reserve_cooldown
+                        ;;
+                    1)
+                        start_no_reserve_cooldown
+                        ;;
+                    2)
+                        clear_no_reserve_cooldown
+                        log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+                        ;;
+                esac
             fi
         fi
 
@@ -522,7 +693,7 @@ print_interfaces() {
 }
 
 show_status() {
-    local mode current failures
+    local mode current failures recovery_remaining
     ensure_state_dir
 
     mode="$(get_connection_type)"
@@ -543,9 +714,21 @@ show_status() {
         say "Autostart: disabled"
     fi
 
+    if podkop_running; then
+        say "Podkop service: running"
+    else
+        say "Podkop service: stopped"
+    fi
+
     say "Podkop connection type: ${mode:-not configured}"
     say "Current Podkop VPN: ${current:-not configured}"
     say "Failure counter: ${failures}/${FAIL_THRESHOLD}"
+
+    recovery_remaining="$(no_reserve_cooldown_remaining 2>/dev/null)"
+    if [ -n "$recovery_remaining" ]; then
+        say "No-reserve retry in: ${recovery_remaining}s"
+    fi
+
     say "Health URL: ${TEST_URL}"
     say ""
 
@@ -581,6 +764,8 @@ FAIL_THRESHOLD=${FAIL_THRESHOLD}
 CANDIDATE_SUCCESS_THRESHOLD=${CANDIDATE_SUCCESS_THRESHOLD}
 CANDIDATE_RETRY_DELAY=${CANDIDATE_RETRY_DELAY}
 POST_SWITCH_DELAY=${POST_SWITCH_DELAY}
+STARTUP_GRACE_PERIOD=${STARTUP_GRACE_PERIOD}
+NO_RESERVE_RETRY_INTERVAL=${NO_RESERVE_RETRY_INTERVAL}
 QUARANTINE_SECONDS=${QUARANTINE_SECONDS}
 EOF
 }
