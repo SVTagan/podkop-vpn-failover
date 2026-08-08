@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2 - 2026-08-08
+
+Final boot and full-outage hardening for the current OpenWrt/Podkop implementation.
+
+- Added a 120-second startup grace period before automatic failover is allowed.
+- Added an explicit Podkop service-state check; failover stays idle while `/etc/init.d/podkop running` reports that Podkop is stopped.
+- Added a 300-second interval between full VPN-pool scans after no healthy reserve is found.
+- During the no-reserve interval, the currently selected VPN is still probed at the normal 30-second cadence so a quick self-recovery is detected without waiting five minutes.
+- Added status output for the Podkop service state and an active no-reserve retry countdown.
+- Added the new startup/recovery timings to the built-in configuration display.
+
 ## 0.1.1 - 2026-08-08
 
 Hardening release after live failover testing on the target router.
