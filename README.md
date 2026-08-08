@@ -19,7 +19,7 @@
 - временно помещает недавно упавший VPN в quarantine;
 - не возвращается автоматически на прежний VPN, пока текущий работает;
 - после полного отказа всего пула не перебирает все VPN непрерывно;
-- имеет 120-секундный grace period после запуска сервиса/роутера;
+- имеет 120-секундный grace period после запуска сервиса;
 - умеет работать через LuCI `System → Custom Commands`, поэтому для обычного использования SSH не нужен.
 
 ## Как выбираются VPN
@@ -70,7 +70,7 @@ curl --interface awg0 -4 https://www.gstatic.com/generate_204
 
 ## Установка
 
-На обычном OpenWrt `uclient-fetch` уже есть, поэтому можно начать с него:
+Если на роутере есть штатный `uclient-fetch`:
 
 ```sh
 uclient-fetch -q -O /tmp/pvf-install.sh \
@@ -85,7 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/in
   -o /tmp/pvf-install.sh && sh /tmp/pvf-install.sh
 ```
 
-Установщик при необходимости поставит `curl`, предложит LuCI-интеграцию через `luci-app-commands` и добавит procd-сервис.
+Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис.
 
 ### После первой установки
 
@@ -180,7 +180,7 @@ sh /tmp/pvf-uninstall.sh
 - настройки пока встроены в shell-скрипт, отдельной формы LuCI нет;
 - установщик рассчитан на `opkg`.
 
-Поддержка нескольких независимых health-check URL оставлена как отдельная будущая доработка.
+Поддержка нескольких независимых health-check URL оставлена как [отдельная будущая доработка](https://github.com/SVTagan/podkop-vpn-failover/issues/3).
 
 ## Проверка на реальном роутере
 
