@@ -1,14 +1,23 @@
 # Changelog
 
+## 0.1.3 - 2026-08-08
+
+Correct runtime readiness detection for Podkop.
+
+- Replaced `/etc/init.d/podkop running` as a readiness check because Podkop uses a one-shot init action and may report `stopped` after a successful start.
+- Podkop runtime is now considered ready when the sing-box init service is running and `/etc/sing-box/config.json` exists.
+- Updated status output from `Podkop service: running/stopped` to `Podkop runtime: ready/not ready`.
+- Preserved the v0.1.2 startup grace and no-reserve retry behavior unchanged.
+
 ## 0.1.2 - 2026-08-08
 
 Final boot and full-outage hardening for the current OpenWrt/Podkop implementation.
 
 - Added a 120-second startup grace period before automatic failover is allowed.
-- Added an explicit Podkop service-state check; failover stays idle while `/etc/init.d/podkop running` reports that Podkop is stopped.
+- Added an explicit Podkop readiness guard so failover stays idle while the Podkop runtime is unavailable.
 - Added a 300-second interval between full VPN-pool scans after no healthy reserve is found.
 - During the no-reserve interval, the currently selected VPN is still probed at the normal 30-second cadence so a quick self-recovery is detected without waiting five minutes.
-- Added status output for the Podkop service state and an active no-reserve retry countdown.
+- Added status output for Podkop readiness and an active no-reserve retry countdown.
 - Added the new startup/recovery timings to the built-in configuration display.
 
 ## 0.1.1 - 2026-08-08
