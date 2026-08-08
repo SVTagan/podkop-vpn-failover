@@ -5,6 +5,7 @@ set -u
 TAG="podkop-vpn-failover"
 INIT="/etc/init.d/podkop-vpn-failover"
 WORKER="/usr/bin/podkop-vpn-failover"
+CONTROL="/usr/bin/podkop-vpn-failover-control"
 STATE_DIR="/tmp/podkop-vpn-failover"
 LOCK_DIR="/tmp/podkop-vpn-failover.lock"
 
@@ -23,7 +24,7 @@ if [ -x "$INIT" ]; then
     "$INIT" disable >/dev/null 2>&1 || true
 fi
 
-rm -f "$WORKER" "$INIT"
+rm -f "$WORKER" "$CONTROL" "$INIT"
 rm -rf "$STATE_DIR" "$LOCK_DIR"
 
 for section in pvf_status pvf_test pvf_logs pvf_config pvf_start pvf_restart pvf_stop; do
