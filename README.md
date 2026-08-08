@@ -70,7 +70,9 @@ curl --interface awg0 -4 https://www.gstatic.com/generate_204
 
 ## Установка
 
-Если на роутере есть штатный `uclient-fetch`:
+Скачать и запустить установщик можно любым доступным способом.
+
+Через `uclient-fetch`:
 
 ```sh
 uclient-fetch -q -O /tmp/pvf-install.sh \
@@ -78,14 +80,22 @@ uclient-fetch -q -O /tmp/pvf-install.sh \
 sh /tmp/pvf-install.sh
 ```
 
-Если `curl` уже установлен:
+Через `curl`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh \
   -o /tmp/pvf-install.sh && sh /tmp/pvf-install.sh
 ```
 
-Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис.
+Через `wget`:
+
+```sh
+wget -q -O /tmp/pvf-install.sh \
+  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh && \
+sh /tmp/pvf-install.sh
+```
+
+Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис. Для загрузки своих файлов он умеет использовать `curl`, `uclient-fetch` или `wget`.
 
 ### После первой установки
 
@@ -161,8 +171,27 @@ logread | grep podkop-vpn-failover
 
 ## Удаление
 
+Как и при установке, `uninstall.sh` можно скачать любым доступным способом.
+
+Через `uclient-fetch`:
+
 ```sh
 uclient-fetch -q -O /tmp/pvf-uninstall.sh \
+  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
+sh /tmp/pvf-uninstall.sh
+```
+
+Через `curl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh \
+  -o /tmp/pvf-uninstall.sh && sh /tmp/pvf-uninstall.sh
+```
+
+Через `wget`:
+
+```sh
+wget -q -O /tmp/pvf-uninstall.sh \
   https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
 sh /tmp/pvf-uninstall.sh
 ```

@@ -70,7 +70,9 @@ The current installer is intended for OpenWrt systems using `opkg`. Podkop must 
 
 ## Installation
 
-If `uclient-fetch` is available on the router:
+Download and run the installer with any available tool.
+
+Using `uclient-fetch`:
 
 ```sh
 uclient-fetch -q -O /tmp/pvf-install.sh \
@@ -78,14 +80,22 @@ uclient-fetch -q -O /tmp/pvf-install.sh \
 sh /tmp/pvf-install.sh
 ```
 
-Or, if `curl` is already installed:
+Using `curl`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh \
   -o /tmp/pvf-install.sh && sh /tmp/pvf-install.sh
 ```
 
-The installer can install `curl` when needed, installs/configures `luci-app-commands` by default, and adds the procd service.
+Using `wget`:
+
+```sh
+wget -q -O /tmp/pvf-install.sh \
+  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh && \
+sh /tmp/pvf-install.sh
+```
+
+The installer can install `curl` when needed, installs/configures `luci-app-commands` by default, and adds the procd service. When downloading its own files it can use `curl`, `uclient-fetch`, or `wget`.
 
 ### First install
 
@@ -161,8 +171,27 @@ No persistent log file is written to flash. Runtime state is kept under `/tmp` a
 
 ## Uninstall
 
+As with installation, `uninstall.sh` can be downloaded with any available tool.
+
+Using `uclient-fetch`:
+
 ```sh
 uclient-fetch -q -O /tmp/pvf-uninstall.sh \
+  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
+sh /tmp/pvf-uninstall.sh
+```
+
+Using `curl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh \
+  -o /tmp/pvf-uninstall.sh && sh /tmp/pvf-uninstall.sh
+```
+
+Using `wget`:
+
+```sh
+wget -q -O /tmp/pvf-uninstall.sh \
   https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
 sh /tmp/pvf-uninstall.sh
 ```
