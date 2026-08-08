@@ -136,9 +136,11 @@ if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     configure_luci_command pvf_test    'VPN Failover: Test all VPNs'   '/usr/bin/podkop-vpn-failover test'
     configure_luci_command pvf_logs    'VPN Failover: Logs'            '/usr/bin/podkop-vpn-failover logs'
     configure_luci_command pvf_config  'VPN Failover: Show settings'   '/usr/bin/podkop-vpn-failover config'
-    configure_luci_command pvf_start   'VPN Failover: Enable + Start'  '/etc/init.d/podkop-vpn-failover enable; /etc/init.d/podkop-vpn-failover start'
+    # luci-app-commands executes an argv-style command and does not interpret
+    # shell metacharacters such as ';'. Use an explicit shell for compound actions.
+    configure_luci_command pvf_start   'VPN Failover: Enable + Start'  "/bin/sh -c '/etc/init.d/podkop-vpn-failover enable; /etc/init.d/podkop-vpn-failover start'"
     configure_luci_command pvf_restart 'VPN Failover: Restart'         '/etc/init.d/podkop-vpn-failover restart'
-    configure_luci_command pvf_stop    'VPN Failover: Stop + Disable'  '/etc/init.d/podkop-vpn-failover stop; /etc/init.d/podkop-vpn-failover disable'
+    configure_luci_command pvf_stop    'VPN Failover: Stop + Disable'  "/bin/sh -c '/etc/init.d/podkop-vpn-failover stop; /etc/init.d/podkop-vpn-failover disable'"
     uci commit luci
 fi
 
