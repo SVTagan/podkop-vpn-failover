@@ -173,7 +173,9 @@ if [ "$existing_install" -eq 1 ]; then
 
     if [ "$was_running" -eq 1 ]; then
         info "Restoring running failover service..."
-        "$CONTROL_DST" restart >/dev/null 2>&1 || fail "Updated files were installed, but the failover service could not be restarted."
+        if ! "$CONTROL_DST" restart; then
+            fail "Updated files were installed, but the failover service could not be restarted. See the control-wrapper error above."
+        fi
     else
         "$INIT_DST" stop >/dev/null 2>&1 || true
     fi
