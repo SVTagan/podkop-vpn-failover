@@ -1,0 +1,31 @@
+#!/bin/sh
+
+INIT="/etc/init.d/podkop-vpn-failover"
+
+fail() {
+    printf '[ERROR] %s\n' "$*" >&2
+    exit 1
+}
+
+[ -x "$INIT" ] || fail "Failover init service was not found at ${INIT}."
+
+case "${1:-}" in
+    start)
+        "$INIT" enable || fail "Failed to enable failover autostart."
+        "$INIT" start || fail "Failed to start failover service."
+        printf 'Failover service enabled and started.\n'
+        ;;
+    restart)
+        "$INIT" restart || fail "Failed to restart failover service."
+        printf 'Failover service restarted.\n'
+        ;;
+    stop)
+        "$INIT" stop || fail "Failed to stop failover service."
+        "$INIT" disable || fail "Failed to disable failover autostart."
+        printf 'Failover service stopped and disabled.\n'
+        ;;
+    *)
+        printf 'Usage: %s {start|restart|stop}\n' "$0" >&2
+        exit 2
+        ;;
+esac
