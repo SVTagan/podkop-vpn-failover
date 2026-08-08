@@ -26,6 +26,16 @@ cleanup_stale_lock() {
     return 0
 }
 
+wait_running() {
+    local attempt=0
+    while [ "$attempt" -lt 5 ]; do
+        "$INIT" running >/dev/null 2>&1 && return 0
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    return 1
+}
+
 case "${1:-}" in
     start)
         "$INIT" enable || fail "Failed to enable failover autostart."
@@ -36,13 +46,27 @@ case "${1:-}" in
         fi
 
         cleanup_stale_lock || fail "A failover daemon process is still running."
-        "$INIT" start || fail "Failed to start failover service."
+        if ! "$INIT" start; then
+            "$INIT" disable >/dev/null 2>&1 || true
+            fail "Failed to start failover service; autostart disabled."
+        fi
+        if ! wait_running; then
+            "$INIT" stop >/dev/null 2>&1 || true
+            cleanup_stale_lock >/dev/null 2>&1 || true
+            "$INIT" disable >/dev/null 2>&1 || true
+            fail "Failover service did not stay running; autostart disabled."
+        fi
         printf 'Failover service enabled and started.\n'
         ;;
     restart)
         "$INIT" stop || fail "Failed to stop failover service."
         cleanup_stale_lock || fail "Old failover daemon is still running after stop."
         "$INIT" start || fail "Failed to start failover service."
+        if ! wait_running; then
+            "$INIT" stop >/dev/null 2>&1 || true
+            cleanup_stale_lock >/dev/null 2>&1 || true
+            fail "Failover service did not stay running after restart."
+        fi
         printf 'Failover service restarted.\n'
         ;;
     stop)
