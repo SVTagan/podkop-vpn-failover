@@ -1,0 +1,536 @@
+#!/bin/sh
+
+# podkop-vpn-failover
+# Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
+
+VERSION="0.1.0"
+TAG="podkop-vpn-failover"
+
+# Interfaces are discovered automatically from /etc/config/network.
+# Only UCI interface sections whose name starts with this prefix and whose
+# protocol is amneziawg are considered.
+INTERFACE_PREFIX="awg"
+
+# Health-check settings.
+TEST_URL="https://www.gstatic.com/generate_204"
+CHECK_INTERVAL=30
+CONNECT_TIMEOUT=5
+MAX_TIME=10
+FAIL_THRESHOLD=3
+CANDIDATE_SUCCESS_THRESHOLD=2
+CANDIDATE_RETRY_DELAY=1
+POST_SWITCH_DELAY=4
+
+# A recently failed interface is temporarily deprioritized. If no other
+# healthy reserve exists, quarantined interfaces are still tested as a
+# last-resort recovery path.
+QUARANTINE_SECONDS=180
+
+STATE_DIR="/tmp/${TAG}"
+LOCK_DIR="/tmp/${TAG}.lock"
+PID_FILE="${STATE_DIR}/pid"
+FAIL_FILE="${STATE_DIR}/failures"
+LAST_SWITCH_FILE="${STATE_DIR}/last-switch"
+SING_BOX_CONFIG="/etc/sing-box/config.json"
+
+PROBE_HTTP="000"
+PROBE_TIME="0"
+PROBE_RC=1
+FOREGROUND=0
+
+say() {
+    printf '%s\n' "$*"
+}
+
+log_msg() {
+    local level="$1"
+    shift
+    logger -t "$TAG" -p "daemon.${level}" -- "$*"
+    [ "$FOREGROUND" = "1" ] && printf '[%s] %s\n' "$level" "$*" >&2
+}
+
+ensure_state_dir() {
+    [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
+}
+
+now_epoch() {
+    date +%s
+}
+
+get_current_interface() {
+    uci -q get podkop.main.interface 2>/dev/null
+}
+
+# BusyBox sort does not provide GNU sort -V. Build a sortable key by padding
+# every numeric run, so awg2 sorts before awg10 and awg2_2 before awg2_10.
+natural_sort() {
+    awk '
+        function natural_key(s, out, n) {
+            out = ""
+            while (match(s, /[0-9]+/)) {
+                out = out substr(s, 1, RSTART - 1)
+                n = substr(s, RSTART, RLENGTH) + 0
+                out = out sprintf("%012d", n)
+                s = substr(s, RSTART + RLENGTH)
+            }
+            return out s
+        }
+        NF { print natural_key($0) "\t" $0 }
+    ' | sort | cut -f2-
+}
+
+discover_interfaces() {
+    local section proto
+
+    uci -q show network 2>/dev/null \
+        | sed -n 's/^network\.\([^.=]*\)=interface$/\1/p' \
+        | while IFS= read -r section; do
+            case "$section" in
+                "${INTERFACE_PREFIX}"*)
+                    proto="$(uci -q get "network.${section}.proto" 2>/dev/null)"
+                    [ "$proto" = "amneziawg" ] && printf '%s\n' "$section"
+                    ;;
+            esac
+        done \
+        | natural_sort
+}
+
+is_discovered_interface() {
+    local wanted="$1" iface
+    for iface in $(discover_interfaces); do
+        [ "$iface" = "$wanted" ] && return 0
+    done
+    return 1
+}
+
+probe_interface() {
+    local iface="$1" result
+
+    PROBE_HTTP="000"
+    PROBE_TIME="0"
+    PROBE_RC=1
+
+    result="$(curl --interface "$iface" -4 \
+        --connect-timeout "$CONNECT_TIMEOUT" \
+        --max-time "$MAX_TIME" \
+        -sS -o /dev/null \
+        -w '%{http_code} %{time_total}' \
+        "$TEST_URL" 2>/dev/null)"
+    PROBE_RC=$?
+
+    [ -n "$result" ] && {
+        PROBE_HTTP="${result%% *}"
+        PROBE_TIME="${result#* }"
+    }
+
+    [ "$PROBE_RC" -eq 0 ] && [ "$PROBE_HTTP" = "204" ]
+}
+
+candidate_is_healthy() {
+    local iface="$1" attempt=1
+
+    while [ "$attempt" -le "$CANDIDATE_SUCCESS_THRESHOLD" ]; do
+        if ! probe_interface "$iface"; then
+            return 1
+        fi
+        [ "$attempt" -lt "$CANDIDATE_SUCCESS_THRESHOLD" ] && sleep "$CANDIDATE_RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+
+    return 0
+}
+
+quarantine_file() {
+    printf '%s/quarantine.%s' "$STATE_DIR" "$1"
+}
+
+mark_quarantine() {
+    local iface="$1" until
+    ensure_state_dir
+    until=$(( $(now_epoch) + QUARANTINE_SECONDS ))
+    printf '%s\n' "$until" > "$(quarantine_file "$iface")"
+}
+
+clear_quarantine() {
+    rm -f "$(quarantine_file "$1")"
+}
+
+is_quarantined() {
+    local iface="$1" file until now
+    file="$(quarantine_file "$iface")"
+    [ -f "$file" ] || return 1
+
+    until="$(cat "$file" 2>/dev/null)"
+    now="$(now_epoch)"
+
+    case "$until" in
+        ''|*[!0-9]*)
+            rm -f "$file"
+            return 1
+            ;;
+    esac
+
+    if [ "$now" -lt "$until" ]; then
+        return 0
+    fi
+
+    rm -f "$file"
+    return 1
+}
+
+verify_podkop_binding() {
+    local iface="$1" current
+
+    current="$(get_current_interface)"
+    [ "$current" = "$iface" ] || return 1
+    [ -r "$SING_BOX_CONFIG" ] || return 1
+
+    if command -v jq >/dev/null 2>&1; then
+        jq -e --arg iface "$iface" \
+            '.outbounds[]? | select(.tag == "main-out") | .bind_interface == $iface' \
+            "$SING_BOX_CONFIG" >/dev/null 2>&1
+        return $?
+    fi
+
+    grep -A5 '"tag": "main-out"' "$SING_BOX_CONFIG" 2>/dev/null \
+        | grep -Fq "\"bind_interface\": \"${iface}\""
+}
+
+record_switch() {
+    local from="$1" to="$2"
+    ensure_state_dir
+    {
+        printf 'time=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+        printf 'from=%s\n' "$from"
+        printf 'to=%s\n' "$to"
+    } > "$LAST_SWITCH_FILE"
+}
+
+restore_interface() {
+    local iface="$1"
+    uci set "podkop.main.interface=${iface}" || return 1
+    uci commit podkop || return 1
+    /etc/init.d/podkop reload >/dev/null 2>&1
+}
+
+switch_to_interface() {
+    local from="$1" to="$2"
+
+    log_msg notice "Switching Podkop VPN: ${from} -> ${to}"
+
+    if ! uci set "podkop.main.interface=${to}" || ! uci commit podkop; then
+        log_msg err "Failed to update Podkop UCI interface to ${to}"
+        return 1
+    fi
+
+    if ! /etc/init.d/podkop reload >/dev/null 2>&1; then
+        log_msg err "Podkop reload failed after selecting ${to}; restoring ${from}"
+        restore_interface "$from" >/dev/null 2>&1
+        mark_quarantine "$to"
+        return 1
+    fi
+
+    sleep "$POST_SWITCH_DELAY"
+
+    if ! verify_podkop_binding "$to"; then
+        log_msg err "Podkop did not bind main-out to ${to}; restoring ${from}"
+        restore_interface "$from" >/dev/null 2>&1
+        mark_quarantine "$to"
+        return 1
+    fi
+
+    if ! candidate_is_healthy "$to"; then
+        log_msg err "Post-switch health-check failed for ${to}; restoring ${from}"
+        restore_interface "$from" >/dev/null 2>&1
+        mark_quarantine "$to"
+        return 1
+    fi
+
+    clear_quarantine "$to"
+    record_switch "$from" "$to"
+    log_msg notice "Failover completed successfully: ${from} -> ${to}"
+    return 0
+}
+
+try_candidates_pass() {
+    local failed="$1" pass="$2" iface quarantined
+
+    for iface in $(discover_interfaces); do
+        [ "$iface" = "$failed" ] && continue
+
+        quarantined=0
+        is_quarantined "$iface" && quarantined=1
+
+        if [ "$pass" = "normal" ] && [ "$quarantined" -eq 1 ]; then
+            continue
+        fi
+        if [ "$pass" = "quarantined" ] && [ "$quarantined" -eq 0 ]; then
+            continue
+        fi
+
+        log_msg notice "Testing failover candidate ${iface}"
+        if candidate_is_healthy "$iface"; then
+            log_msg notice "Candidate ${iface} passed ${CANDIDATE_SUCCESS_THRESHOLD} health-check(s)"
+            if switch_to_interface "$failed" "$iface"; then
+                return 0
+            fi
+        else
+            log_msg warning "Candidate ${iface} is unhealthy (curl=${PROBE_RC}, HTTP=${PROBE_HTTP})"
+            mark_quarantine "$iface"
+        fi
+    done
+
+    return 1
+}
+
+perform_failover() {
+    local failed="$1"
+
+    mark_quarantine "$failed"
+
+    if try_candidates_pass "$failed" normal; then
+        return 0
+    fi
+
+    log_msg warning "No healthy non-quarantined reserve found; testing quarantined reserves as last resort"
+    if try_candidates_pass "$failed" quarantined; then
+        return 0
+    fi
+
+    log_msg err "No healthy reserve VPN interface is available"
+    return 1
+}
+
+cleanup_daemon() {
+    rm -f "$PID_FILE"
+    rmdir "$LOCK_DIR" 2>/dev/null
+}
+
+acquire_daemon_lock() {
+    ensure_state_dir
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+        return 1
+    fi
+    printf '%s\n' "$$" > "$PID_FILE"
+    trap 'cleanup_daemon; exit 0' INT TERM
+    trap 'cleanup_daemon' EXIT
+    return 0
+}
+
+run_daemon() {
+    local current failures=0
+
+    FOREGROUND=1
+
+    if ! acquire_daemon_lock; then
+        log_msg err "Another ${TAG} daemon appears to be running"
+        exit 1
+    fi
+
+    printf '0\n' > "$FAIL_FILE"
+    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} URL=${TEST_URL}"
+
+    while :; do
+        current="$(get_current_interface)"
+
+        if [ -z "$current" ]; then
+            failures=0
+            printf '0\n' > "$FAIL_FILE"
+            log_msg err "Podkop main interface is not configured"
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
+        case "$current" in
+            "${INTERFACE_PREFIX}"*) ;;
+            *)
+                failures=0
+                printf '0\n' > "$FAIL_FILE"
+                log_msg warning "Podkop main interface '${current}' does not match ${INTERFACE_PREFIX}*; failover is idle"
+                sleep "$CHECK_INTERVAL"
+                continue
+                ;;
+        esac
+
+        if ! is_discovered_interface "$current"; then
+            failures=0
+            printf '0\n' > "$FAIL_FILE"
+            log_msg warning "Podkop main interface '${current}' is not a configured AmneziaWG ${INTERFACE_PREFIX}* interface; failover is idle"
+            sleep "$CHECK_INTERVAL"
+            continue
+        fi
+
+        if probe_interface "$current"; then
+            if [ "$failures" -gt 0 ]; then
+                log_msg notice "${current} recovered after ${failures} failed health-check(s)"
+            fi
+            failures=0
+            printf '0\n' > "$FAIL_FILE"
+        else
+            failures=$((failures + 1))
+            printf '%s\n' "$failures" > "$FAIL_FILE"
+            log_msg warning "Health-check failed for ${current}: ${failures}/${FAIL_THRESHOLD} (curl=${PROBE_RC}, HTTP=${PROBE_HTTP})"
+
+            if [ "$failures" -ge "$FAIL_THRESHOLD" ]; then
+                log_msg err "Confirmed VPN failure on ${current}; starting failover"
+                if perform_failover "$current"; then
+                    failures=0
+                    printf '0\n' > "$FAIL_FILE"
+                else
+                    # Require a fresh set of failures before scanning all reserves again.
+                    failures=0
+                    printf '0\n' > "$FAIL_FILE"
+                fi
+            fi
+        fi
+
+        sleep "$CHECK_INTERVAL"
+    done
+}
+
+service_running() {
+    local pid
+    [ -r "$PID_FILE" ] || return 1
+    pid="$(cat "$PID_FILE" 2>/dev/null)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+service_enabled() {
+    /etc/init.d/podkop-vpn-failover enabled >/dev/null 2>&1
+}
+
+print_interfaces() {
+    local current iface state marker quarantine
+    current="$(get_current_interface)"
+
+    say "Interface health:"
+    for iface in $(discover_interfaces); do
+        marker=""
+        [ "$iface" = "$current" ] && marker=" ACTIVE"
+
+        quarantine=""
+        is_quarantined "$iface" && quarantine=" QUARANTINED"
+
+        if probe_interface "$iface"; then
+            state="HEALTHY HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+        else
+            state="FAILED curl=${PROBE_RC} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+        fi
+
+        printf '  %-16s %-38s%s%s\n' "$iface" "$state" "$marker" "$quarantine"
+    done
+}
+
+show_status() {
+    local current failures
+    ensure_state_dir
+
+    current="$(get_current_interface)"
+    failures="$(cat "$FAIL_FILE" 2>/dev/null)"
+    [ -n "$failures" ] || failures=0
+
+    say "Podkop VPN Failover v${VERSION}"
+    if service_running; then
+        say "Service: running"
+    else
+        say "Service: stopped"
+    fi
+
+    if service_enabled; then
+        say "Autostart: enabled"
+    else
+        say "Autostart: disabled"
+    fi
+
+    say "Current Podkop VPN: ${current:-not configured}"
+    say "Failure counter: ${failures}/${FAIL_THRESHOLD}"
+    say "Health URL: ${TEST_URL}"
+    say ""
+
+    if [ -r "$LAST_SWITCH_FILE" ]; then
+        say "Last switch:"
+        sed 's/^/  /' "$LAST_SWITCH_FILE"
+        say ""
+    fi
+
+    print_interfaces
+}
+
+show_test() {
+    say "Podkop VPN Failover v${VERSION} - live VPN test"
+    say "Health URL: ${TEST_URL}"
+    say ""
+    print_interfaces
+}
+
+show_logs() {
+    logread 2>/dev/null | grep "$TAG" | tail -n 50
+}
+
+show_config() {
+    cat <<EOF
+Podkop VPN Failover v${VERSION}
+INTERFACE_PREFIX=${INTERFACE_PREFIX}
+TEST_URL=${TEST_URL}
+CHECK_INTERVAL=${CHECK_INTERVAL}
+CONNECT_TIMEOUT=${CONNECT_TIMEOUT}
+MAX_TIME=${MAX_TIME}
+FAIL_THRESHOLD=${FAIL_THRESHOLD}
+CANDIDATE_SUCCESS_THRESHOLD=${CANDIDATE_SUCCESS_THRESHOLD}
+CANDIDATE_RETRY_DELAY=${CANDIDATE_RETRY_DELAY}
+POST_SWITCH_DELAY=${POST_SWITCH_DELAY}
+QUARANTINE_SECONDS=${QUARANTINE_SECONDS}
+EOF
+}
+
+usage() {
+    cat <<EOF
+Usage: $0 COMMAND
+
+Commands:
+  daemon       Run the continuous health-check/failover loop (used by procd)
+  status       Show service state, current Podkop VPN and live interface health
+  test         Run a live health-check for all discovered awg* interfaces
+  check IFACE  Check one interface; returns 0 only for HTTP 204
+  logs         Show the latest failover log entries
+  config       Show built-in failover settings
+  version      Show version
+EOF
+}
+
+case "${1:-}" in
+    daemon)
+        run_daemon
+        ;;
+    status)
+        show_status
+        ;;
+    test)
+        show_test
+        ;;
+    check)
+        [ -n "${2:-}" ] || { usage >&2; exit 2; }
+        if probe_interface "$2"; then
+            say "${2}: HEALTHY HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+            exit 0
+        fi
+        say "${2}: FAILED curl=${PROBE_RC} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+        exit 1
+        ;;
+    logs)
+        show_logs
+        ;;
+    config)
+        show_config
+        ;;
+    version|--version|-V)
+        say "$VERSION"
+        ;;
+    help|--help|-h|'')
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
