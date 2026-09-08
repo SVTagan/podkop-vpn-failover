@@ -1,0 +1,165 @@
+name: Create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag; must match podkop-vpn-failover version, for example v0.1.3'
+        required: true
+        default: 'v0.1.3'
+        type: string
+      prerelease:
+        description: 'Mark this GitHub Release as a prerelease'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Read and validate version
+        id: failover
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Releases must be created from the main branch. Current ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          version="$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' podkop-vpn-failover | head -n 1)"
+          if [[ -z "${version}" ]]; then
+            echo "Cannot determine VERSION from podkop-vpn-failover." >&2
+            exit 1
+          fi
+
+          expected_tag="v${version}"
+          if [[ "${RELEASE_TAG}" != "${expected_tag}" ]]; then
+            echo "Release tag ${RELEASE_TAG} does not match podkop-vpn-failover version ${version}. Expected ${expected_tag}." >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate release tree
+        shell: bash
+        env:
+          VERSION: ${{ steps.failover.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          sh -n podkop-vpn-failover
+          sh -n podkop-vpn-failover-control
+          sh -n podkop-vpn-failover.init
+          sh -n install.sh
+          sh -n uninstall.sh
+
+          grep -Fq "Текущая версия: **${VERSION}**" README.md || {
+            echo "README.md version does not match ${VERSION}." >&2
+            exit 1
+          }
+
+          grep -Fq "Current version: **${VERSION}**" README.en.md || {
+            echo "README.en.md version does not match ${VERSION}." >&2
+            exit 1
+          }
+
+          grep -Fq "## ${VERSION} " CHANGELOG.md || {
+            echo "CHANGELOG.md has no section for ${VERSION}." >&2
+            exit 1
+          }
+
+      - name: Build release notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.failover.outputs.version }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          awk -v v="${VERSION}" '
+            BEGIN { capture = 0 }
+            {
+              if (index($0, "## " v " ") == 1 || $0 == "## " v) {
+                capture = 1
+                next
+              }
+              if (capture && $0 ~ /^## /) {
+                exit
+              }
+              if (capture) {
+                print
+              }
+            }
+          ' CHANGELOG.md > changelog-section.md
+
+          if [[ ! -s changelog-section.md ]]; then
+            echo "Could not extract CHANGELOG section for ${VERSION}." >&2
+            exit 1
+          fi
+
+          {
+            echo "# podkop-vpn-failover ${RELEASE_TAG}"
+            echo
+            echo "GitHub Release проекта podkop-vpn-failover — небольшого helper для OpenWrt/Podkop, который проверяет реальную передачу HTTPS-трафика через AmneziaWG-интерфейсы и автоматически переключает podkop.main.interface на рабочий резерв при устойчивом отказе текущего VPN."
+            echo
+            echo "Версия ${VERSION} прошла полный failover-тест на Cudy TR3000 v1 / OpenWrt 24.10.5. Дополнительно штатная установка, запуск, autostart, startup grace и health-check подтверждены на Cudy TR3000 / OpenWrt 24.10.4 и Xiaomi Redmi AX6000 / OpenWrt 24.10.5."
+            echo
+            echo "Проект предоставляется как есть; использование — на свой риск. Перед установкой рекомендуется прочитать README и иметь доступ к роутеру для восстановления конфигурации."
+            echo
+            echo "## Изменения"
+            echo
+            cat changelog-section.md
+            echo
+            echo "---"
+            echo
+            echo "[README](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/README.md) · [English README](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/README.en.md) · [CHANGELOG](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/CHANGELOG.md)"
+          } > release-notes.md
+
+      - name: Create permanent GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+          VERSION: ${{ steps.failover.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists. Versions are immutable; create a new version instead." >&2
+            exit 1
+          fi
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${RELEASE_TAG} already exists without a GitHub Release. Check it manually before publishing." >&2
+            exit 1
+          fi
+
+          args=(
+            release create "${RELEASE_TAG}"
+            --target "${GITHUB_SHA}"
+            --title "podkop-vpn-failover ${VERSION}"
+            --notes-file release-notes.md
+          )
+
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh "${args[@]}"
