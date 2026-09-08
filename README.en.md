@@ -58,13 +58,13 @@ A tunnel is healthy when the request succeeds and returns HTTP `204`.
 
 ## Requirements
 
-Tested on:
+Tested on several real routers:
 
-- Cudy TR3000 v1;
-- OpenWrt 24.10.5;
-- Podkop 0.7.21;
-- sing-box 1.12.22;
-- AmneziaWG.
+- **Cudy TR3000 v1 / OpenWrt 24.10.5** — full failover test, including forced active-tunnel failure and switching `awg0 ↔ awg0_2`;
+- **Cudy TR3000 / OpenWrt 24.10.4** — installation, startup, autostart, startup grace and health check; forced failover has not been tested on this router yet;
+- **Xiaomi Redmi AX6000 / OpenWrt 24.10.5** — installation, discovery of two AWG interfaces, health checks, startup, autostart and startup grace; forced failover has not been tested on this router yet.
+
+The main full-test setup uses Podkop 0.7.21, sing-box 1.12.22 and AmneziaWG.
 
 The current installer is intended for OpenWrt systems using `opkg`. Podkop must use VPN mode and the AmneziaWG interfaces must be named `awg*`.
 
@@ -211,9 +211,11 @@ This project currently targets the original use case:
 
 Support for multiple independent health-check endpoints is tracked as a [possible future improvement](https://github.com/SVTagan/podkop-vpn-failover/issues/3).
 
-## Tested behavior
+## Tested on real routers
 
-The main failover path was tested on a Cudy TR3000 v1 by blocking the UDP transport of the active tunnel while leaving the AWG interface itself up. Failover was verified in both directions (`awg0 → awg0_2` and back), together with debounce, reserve confirmation, quarantine, no automatic switch-back, procd/autostart, LuCI controls and reboot startup.
+The full failover test was performed on a Cudy TR3000 v1 / OpenWrt 24.10.5 by blocking the UDP transport of the active tunnel while leaving the AWG interface itself up. Failover was verified in both directions (`awg0 → awg0_2` and back).
+
+A second Cudy TR3000 running OpenWrt 24.10.4 and a Xiaomi Redmi AX6000 running OpenWrt 24.10.5 additionally confirmed clean installation/startup, procd/autostart, startup grace and real HTTPS health checks. Forced failover has not yet been tested on those two routers.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
