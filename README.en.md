@@ -8,6 +8,10 @@ The idea is simple: Podkop can use `urltest` for multiple proxies, but there is 
 
 This is an independent project. It is not part of Podkop and is not affiliated with its developers. For Podkop itself, use the [Podkop repository](https://github.com/itdoginfo/podkop) and [podkop.net](https://podkop.net/).
 
+## Status
+
+Current version: **0.1.3**.
+
 ## What it does
 
 - automatically discovers `awg*` interfaces using the `amneziawg` protocol;
