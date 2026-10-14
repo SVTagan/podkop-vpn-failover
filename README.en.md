@@ -10,7 +10,7 @@ This is an independent project. It is not part of Podkop and is not affiliated w
 
 ## Status
 
-Current stable version: **0.1.4**. Test version in this branch: **0.1.5**.
+Current version: **0.1.5**.
 
 ### OpenWrt 25.12 / apk
 
@@ -74,6 +74,8 @@ Version 0.1.5 uses a small ordered set of independent health targets:
 Targets are tried sequentially and probing stops at the first success. In the normal case, when `gstatic` works, each cycle still sends only one request. Only failure of all three targets counts as one failed health-check attempt toward the existing `FAIL_THRESHOLD`.
 
 Redirects are intentionally not followed and TLS certificate verification remains enabled. The existing `CONNECT_TIMEOUT=5` and `MAX_TIME=10` apply to every target.
+
+Important: `CHECK_INTERVAL=30` is a pause after a completed check, not a guaranteed start-to-start interval. When a tunnel is completely unreachable, targets are tried sequentially and each may consume its own timeout, so confirmed failure can take noticeably longer. In the real full-outage test, the three targets added about 15 seconds to a cycle and failure warnings appeared roughly every 45 seconds. This is an intentional reliability-over-speed tradeoff to reduce false failovers.
 
 ## Requirements
 
@@ -149,7 +151,7 @@ Reserve VPNs can be added or removed normally under `Network → Interfaces`; th
 
 ## Default behavior
 
-- active VPN check: every 30 seconds;
+- pause after each completed active-VPN check: 30 seconds;
 - health targets: `gstatic` → `apple` → `mozilla`, short-circuiting after the first success;
 - failure threshold: 3 failed checks;
 - reserve confirmation: 2 successful checks;
@@ -233,7 +235,9 @@ This project currently targets the original use case:
 
 The full failover test was performed on a Cudy TR3000 v1 / OpenWrt 24.10.5 by blocking the UDP transport of the active tunnel while leaving the AWG interface itself up. Failover was verified in both directions (`awg0 → awg0_2` and back).
 
-A second Cudy TR3000 running OpenWrt 24.10.4 and a Xiaomi Redmi AX6000 running OpenWrt 24.10.5 additionally confirmed clean installation/startup, procd/autostart, startup grace and real HTTPS health checks. Forced failover has not yet been tested on those two routers.
+A second Cudy TR3000 running OpenWrt 24.10.4 additionally confirmed clean installation/startup, procd/autostart, startup grace and real HTTPS health checks.
+
+On Xiaomi Redmi AX6000 / OpenWrt 24.10.5, version 0.1.5 was additionally tested with all three health targets, Apple and Mozilla fallback paths, complete failure of all targets, a real `awg0 → awg0_2` failover by blocking the active tunnel's UDP transport, and recovery of `awg0` without an automatic switch-back.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 

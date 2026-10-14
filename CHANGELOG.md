@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.5 - unreleased
+## 0.1.5 - 2026-10-15
 
 Health-check fallback hardening for issue #3.
 
@@ -12,6 +12,8 @@ Health-check fallback hardening for issue #3.
 - Applied the same composite check to the active VPN, reserve confirmation, post-switch verification and recovery checks.
 - Added the successful target name to `status`, `test` and `check` output, with compact per-target failure details when all targets fail.
 - Kept interface binding, IPv4-only probing, TLS verification, redirect behavior and existing timeout values unchanged.
+- Documented that `CHECK_INTERVAL` is a post-check pause: when every target times out, a composite check takes longer than 30 seconds; the real full-outage test produced roughly 45-second warning spacing.
+- Real-router validation on Xiaomi Redmi AX6000 / OpenWrt 24.10.5 covered Apple/Mozilla fallback, all-target failure, real `awg0 -> awg0_2` failover and recovery without automatic switch-back.
 
 ## 0.1.4 - 2026-10-14
 
