@@ -3,7 +3,7 @@
 # podkop-vpn-failover
 # Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
 
-VERSION="0.1.4"
+VERSION="0.1.5"
 TAG="podkop-vpn-failover"
 
 # Interfaces are discovered automatically from /etc/config/network.
@@ -11,8 +11,13 @@ TAG="podkop-vpn-failover"
 # protocol is amneziawg are considered.
 INTERFACE_PREFIX="awg"
 
-# Health-check settings.
-TEST_URL="https://www.gstatic.com/generate_204"
+# Health-check settings. Targets are tried in order and probing stops after
+# the first successful target.
+GSTATIC_URL="https://www.gstatic.com/generate_204"
+APPLE_URL="https://captive.apple.com/hotspot-detect.html"
+APPLE_BODY_TOKEN="Success"
+MOZILLA_URL="https://detectportal.firefox.com/success.txt"
+MOZILLA_BODY_TOKEN="success"
 CHECK_INTERVAL=30
 CONNECT_TIMEOUT=5
 MAX_TIME=10
@@ -46,9 +51,12 @@ INIT_SERVICE="/etc/init.d/podkop-vpn-failover"
 PODKOP_INIT="/etc/init.d/podkop"
 SING_BOX_INIT="/etc/init.d/sing-box"
 
+PROBE_TARGET=""
 PROBE_HTTP="000"
 PROBE_TIME="0"
 PROBE_RC=1
+PROBE_REASON=""
+PROBE_FAILURES=""
 FOREGROUND=0
 
 say() {
@@ -169,27 +177,94 @@ is_discovered_interface() {
     return 1
 }
 
-probe_interface() {
-    local iface="$1" result
+probe_target() {
+    local iface="$1" target="$2" url="$3" expected_http="$4" expected_body="${5:-}"
+    local result body_file=""
 
+    PROBE_TARGET="$target"
     PROBE_HTTP="000"
     PROBE_TIME="0"
     PROBE_RC=1
+    PROBE_REASON=""
 
-    result="$(curl --interface "$iface" -4 \
-        --connect-timeout "$CONNECT_TIMEOUT" \
-        --max-time "$MAX_TIME" \
-        -sS -o /dev/null \
-        -w '%{http_code} %{time_total}' \
-        "$TEST_URL" 2>/dev/null)"
-    PROBE_RC=$?
+    if [ -n "$expected_body" ]; then
+        body_file="/tmp/${TAG}.probe-body.$$"
+        rm -f "$body_file"
+        result="$(curl --interface "$iface" -4 \
+            --connect-timeout "$CONNECT_TIMEOUT" \
+            --max-time "$MAX_TIME" \
+            -sS -o "$body_file" \
+            -w '%{http_code} %{time_total}' \
+            "$url" 2>/dev/null)"
+        PROBE_RC=$?
+    else
+        result="$(curl --interface "$iface" -4 \
+            --connect-timeout "$CONNECT_TIMEOUT" \
+            --max-time "$MAX_TIME" \
+            -sS -o /dev/null \
+            -w '%{http_code} %{time_total}' \
+            "$url" 2>/dev/null)"
+        PROBE_RC=$?
+    fi
 
     [ -n "$result" ] && {
         PROBE_HTTP="${result%% *}"
         PROBE_TIME="${result#* }"
     }
 
-    [ "$PROBE_RC" -eq 0 ] && [ "$PROBE_HTTP" = "204" ]
+    if [ "$PROBE_RC" -ne 0 ]; then
+        PROBE_REASON="curl=${PROBE_RC},HTTP=${PROBE_HTTP}"
+        [ -n "$body_file" ] && rm -f "$body_file"
+        return 1
+    fi
+
+    if [ "$PROBE_HTTP" != "$expected_http" ]; then
+        PROBE_REASON="HTTP=${PROBE_HTTP},expected=${expected_http}"
+        [ -n "$body_file" ] && rm -f "$body_file"
+        return 1
+    fi
+
+    if [ -n "$expected_body" ] && ! grep -Fq "$expected_body" "$body_file" 2>/dev/null; then
+        PROBE_REASON="HTTP=${PROBE_HTTP},body-mismatch"
+        rm -f "$body_file"
+        return 1
+    fi
+
+    [ -n "$body_file" ] && rm -f "$body_file"
+    return 0
+}
+
+append_probe_failure() {
+    local failure="${PROBE_TARGET}:${PROBE_REASON}"
+
+    if [ -n "$PROBE_FAILURES" ]; then
+        PROBE_FAILURES="${PROBE_FAILURES}; ${failure}"
+    else
+        PROBE_FAILURES="$failure"
+    fi
+}
+
+probe_interface() {
+    local iface="$1"
+
+    PROBE_FAILURES=""
+
+    if probe_target "$iface" "gstatic" "$GSTATIC_URL" "204"; then
+        return 0
+    fi
+    append_probe_failure
+
+    if probe_target "$iface" "apple" "$APPLE_URL" "200" "$APPLE_BODY_TOKEN"; then
+        return 0
+    fi
+    append_probe_failure
+
+    if probe_target "$iface" "mozilla" "$MOZILLA_URL" "200" "$MOZILLA_BODY_TOKEN"; then
+        return 0
+    fi
+    append_probe_failure
+
+    return 1
 }
 
 candidate_is_healthy() {
@@ -365,7 +440,7 @@ try_candidates_pass() {
             [ "$rc" -eq 0 ] && return 0
             [ "$rc" -eq 2 ] && return 2
         else
-            log_msg warning "Candidate ${iface} is unhealthy (curl=${PROBE_RC}, HTTP=${PROBE_HTTP})"
+            log_msg warning "Candidate ${iface} is unhealthy; all health targets failed (${PROBE_FAILURES})"
             mark_quarantine "$iface"
         fi
     done
@@ -444,7 +519,7 @@ run_daemon() {
     reset_failure_counter
     clear_no_reserve_cooldown
     startup_until=$(( $(now_epoch) + STARTUP_GRACE_PERIOD ))
-    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} startup_grace=${STARTUP_GRACE_PERIOD}s no_reserve_retry=${NO_RESERVE_RETRY_INTERVAL}s URL=${TEST_URL}"
+    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} startup_grace=${STARTUP_GRACE_PERIOD}s no_reserve_retry=${NO_RESERVE_RETRY_INTERVAL}s targets=gstatic,apple,mozilla"
 
     while :; do
         now="$(now_epoch)"
@@ -628,7 +703,7 @@ run_daemon() {
         else
             failures=$((failures + 1))
             printf '%s\n' "$failures" > "$FAIL_FILE"
-            log_msg warning "Health-check failed for ${current}: ${failures}/${FAIL_THRESHOLD} (curl=${PROBE_RC}, HTTP=${PROBE_HTTP})"
+            log_msg warning "Health-check failed for ${current}: ${failures}/${FAIL_THRESHOLD}; all targets failed (${PROBE_FAILURES})"
 
             if [ "$failures" -ge "$FAIL_THRESHOLD" ]; then
                 log_msg err "Confirmed VPN failure on ${current}; starting failover"
@@ -684,13 +759,20 @@ print_interfaces() {
         is_quarantined "$iface" && quarantine=" QUARANTINED"
 
         if probe_interface "$iface"; then
-            state="HEALTHY HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+            state="HEALTHY via ${PROBE_TARGET} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
         else
-            state="FAILED curl=${PROBE_RC} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+            state="FAILED all targets (${PROBE_FAILURES})"
         fi
 
-        printf '  %-16s %-38s%s%s\n' "$iface" "$state" "$marker" "$quarantine"
+        printf '  %-16s %-55s%s%s\n' "$iface" "$state" "$marker" "$quarantine"
     done
+}
+
+print_health_targets() {
+    say "Health targets:"
+    say "  gstatic: ${GSTATIC_URL} -> HTTP 204"
+    say "  apple:   ${APPLE_URL} -> HTTP 200 + body contains '${APPLE_BODY_TOKEN}'"
+    say "  mozilla: ${MOZILLA_URL} -> HTTP 200 + body contains '${MOZILLA_BODY_TOKEN}'"
 }
 
 show_status() {
@@ -730,7 +812,7 @@ show_status() {
         say "No-reserve retry in: ${recovery_remaining}s"
     fi
 
-    say "Health URL: ${TEST_URL}"
+    print_health_targets
     say ""
 
     if [ -r "$LAST_SWITCH_FILE" ]; then
@@ -744,7 +826,7 @@ show_status() {
 
 show_test() {
     say "Podkop VPN Failover v${VERSION} - live VPN test"
-    say "Health URL: ${TEST_URL}"
+    print_health_targets
     say ""
     print_interfaces
 }
@@ -757,7 +839,11 @@ show_config() {
     cat <<EOF
 Podkop VPN Failover v${VERSION}
 INTERFACE_PREFIX=${INTERFACE_PREFIX}
-TEST_URL=${TEST_URL}
+GSTATIC_URL=${GSTATIC_URL}
+APPLE_URL=${APPLE_URL}
+APPLE_BODY_TOKEN=${APPLE_BODY_TOKEN}
+MOZILLA_URL=${MOZILLA_URL}
+MOZILLA_BODY_TOKEN=${MOZILLA_BODY_TOKEN}
 CHECK_INTERVAL=${CHECK_INTERVAL}
 CONNECT_TIMEOUT=${CONNECT_TIMEOUT}
 MAX_TIME=${MAX_TIME}
@@ -779,7 +865,7 @@ Commands:
   daemon       Run the continuous health-check/failover loop (used by procd)
   status       Show service state, Podkop mode, current VPN and live interface health
   test         Run a live health-check for all discovered awg* interfaces
-  check IFACE  Check one interface; returns 0 only for HTTP 204
+  check IFACE  Check one interface; returns 0 if any health target succeeds
   logs         Show the latest failover log entries
   config       Show built-in failover settings
   version      Show version
@@ -799,10 +885,10 @@ case "${1:-}" in
     check)
         [ -n "${2:-}" ] || { usage >&2; exit 2; }
         if probe_interface "$2"; then
-            say "${2}: HEALTHY HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+            say "${2}: HEALTHY via ${PROBE_TARGET} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
             exit 0
         fi
-        say "${2}: FAILED curl=${PROBE_RC} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
+        say "${2}: FAILED all targets (${PROBE_FAILURES})"
         exit 1
         ;;
     logs)

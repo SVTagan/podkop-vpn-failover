@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.5 - 2026-10-15
+
+Health-check fallback hardening for issue #3.
+
+- Replaced the single external health-check dependency with three ordered HTTPS targets: Google gstatic, Apple and Mozilla.
+- Added short-circuit probing: later targets are contacted only when all earlier targets fail.
+- Kept Google on HTTP 204; Apple requires HTTP 200 plus `Success`, while Mozilla requires HTTP 200 plus `success` in the response body.
+- Selected the final default target set after real-router endpoint validation on both AWG tunnels; a Cloudflare candidate was dropped after timing out through both test VPNs.
+- A composite health-check fails only when all three targets fail; the existing 3-failure debounce threshold remains unchanged.
+- Applied the same composite check to the active VPN, reserve confirmation, post-switch verification and recovery checks.
+- Added the successful target name to `status`, `test` and `check` output, with compact per-target failure details when all targets fail.
+- Kept interface binding, IPv4-only probing, TLS verification, redirect behavior and existing timeout values unchanged.
+- Documented that `CHECK_INTERVAL` is a post-check pause: when every target times out, a composite check takes longer than 30 seconds; the real full-outage test produced roughly 45-second warning spacing.
+- Real-router validation on Xiaomi Redmi AX6000 / OpenWrt 24.10.5 covered Apple/Mozilla fallback, all-target failure, real `awg0 -> awg0_2` failover and recovery without automatic switch-back.
+
 ## 0.1.4 - 2026-10-14
 
 OpenWrt 25.12 installer compatibility update. Failover runtime behavior is unchanged.

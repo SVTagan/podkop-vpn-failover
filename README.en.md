@@ -10,7 +10,7 @@ This is an independent project. It is not part of Podkop and is not affiliated w
 
 ## Status
 
-Current version: **0.1.4**.
+Current version: **0.1.5**.
 
 ### OpenWrt 25.12 / apk
 
@@ -26,6 +26,7 @@ I have not personally tested this version on a real OpenWrt 25.12 router yet. Th
 
 - automatically discovers `awg*` interfaces using the `amneziawg` protocol;
 - checks real HTTPS traffic instead of relying on an AWG handshake;
+- tries independent Google → Apple → Mozilla health targets in order and stops after the first successful response;
 - requires 3 consecutive failures before failover;
 - confirms a reserve with 2 successful checks;
 - changes `podkop.main.interface` and reloads Podkop normally;
@@ -62,13 +63,19 @@ The script does not switch back just because a lower-numbered VPN has recovered.
 
 ## Tunnel health check
 
-The check uses a real HTTP request bound to one interface:
+The check uses real HTTPS traffic bound to a specific interface through `curl --interface <awg*> -4`.
 
-```sh
-curl --interface awg0 -4 https://www.gstatic.com/generate_204
-```
+Version 0.1.5 uses a small ordered set of independent health targets:
 
-A tunnel is healthy when the request succeeds and returns HTTP `204`.
+1. `https://www.gstatic.com/generate_204` — expects HTTP `204`;
+2. `https://captive.apple.com/hotspot-detect.html` — expects HTTP `200` and a response body containing `Success`;
+3. `https://detectportal.firefox.com/success.txt` — expects HTTP `200` and a response body containing `success`.
+
+Targets are tried sequentially and probing stops at the first success. In the normal case, when `gstatic` works, each cycle still sends only one request. Only failure of all three targets counts as one failed health-check attempt toward the existing `FAIL_THRESHOLD`.
+
+Redirects are intentionally not followed and TLS certificate verification remains enabled. The existing `CONNECT_TIMEOUT=5` and `MAX_TIME=10` apply to every target.
+
+Important: `CHECK_INTERVAL=30` is a pause after a completed check, not a guaranteed start-to-start interval. When a tunnel is completely unreachable, targets are tried sequentially and each may consume its own timeout, so confirmed failure can take noticeably longer. In the real full-outage test, the three targets added about 15 seconds to a cycle and failure warnings appeared roughly every 45 seconds. This is an intentional reliability-over-speed tradeoff to reduce false failovers.
 
 ## Requirements
 
@@ -144,7 +151,8 @@ Reserve VPNs can be added or removed normally under `Network → Interfaces`; th
 
 ## Default behavior
 
-- active VPN check: every 30 seconds;
+- pause after each completed active-VPN check: 30 seconds;
+- health targets: `gstatic` → `apple` → `mozilla`, short-circuiting after the first success;
 - failure threshold: 3 failed checks;
 - reserve confirmation: 2 successful checks;
 - quarantine: 180 seconds;
@@ -219,17 +227,17 @@ This project currently targets the original use case:
 - Podkop VPN mode via `podkop.main.interface`;
 - `awg*` AmneziaWG interfaces;
 - IPv4 health checks;
-- one external health-check URL: `www.gstatic.com/generate_204`;
-- settings are built into the shell script;
+- health-check targets are currently built into the shell script and are not configurable from LuCI;
+- failover settings are built into the shell script;
 - installer support through `apk` on OpenWrt 25.12 is implemented but has not yet been personally verified on a real router.
-
-Support for multiple independent health-check endpoints is tracked as a [possible future improvement](https://github.com/SVTagan/podkop-vpn-failover/issues/3).
 
 ## Tested on real routers
 
 The full failover test was performed on a Cudy TR3000 v1 / OpenWrt 24.10.5 by blocking the UDP transport of the active tunnel while leaving the AWG interface itself up. Failover was verified in both directions (`awg0 → awg0_2` and back).
 
-A second Cudy TR3000 running OpenWrt 24.10.4 and a Xiaomi Redmi AX6000 running OpenWrt 24.10.5 additionally confirmed clean installation/startup, procd/autostart, startup grace and real HTTPS health checks. Forced failover has not yet been tested on those two routers.
+A second Cudy TR3000 running OpenWrt 24.10.4 additionally confirmed clean installation/startup, procd/autostart, startup grace and real HTTPS health checks.
+
+On Xiaomi Redmi AX6000 / OpenWrt 24.10.5, version 0.1.5 was additionally tested with all three health targets, Apple and Mozilla fallback paths, complete failure of all targets, a real `awg0 → awg0_2` failover by blocking the active tunnel's UDP transport, and recovery of `awg0` without an automatic switch-back.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
