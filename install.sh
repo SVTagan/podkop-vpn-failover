@@ -64,9 +64,10 @@ pkg_installed() {
     local package="$1"
 
     if [ "$PKG_MANAGER" = "apk" ]; then
-        # OpenWrt apk: without arguments, "apk info" prints installed package
-        # names only. Exact matching avoids false positives from similar names.
-        apk info 2>/dev/null | grep -Fxq "$package"
+        # OpenWrt 25.12 uses apk v3. "apk info -e" is the direct installed
+        # package check (-e is the short form of --exists) and returns success
+        # only when the named package is installed.
+        apk info -e "$package" >/dev/null 2>&1
     else
         # OpenWrt/opkg may report either "install ok installed" or
         # "install user installed" depending on how a package was installed.
