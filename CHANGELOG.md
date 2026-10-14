@@ -2,7 +2,7 @@
 
 ## 0.1.5 - 2026-10-15
 
-Health-check fallback hardening for issue #3.
+Health-check fallback hardening.
 
 - Replaced the single external health-check dependency with three ordered HTTPS targets: Google gstatic, Apple and Mozilla.
 - Added short-circuit probing: later targets are contacted only when all earlier targets fail.
