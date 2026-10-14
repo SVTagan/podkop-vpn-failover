@@ -4,9 +4,10 @@
 
 Health-check fallback hardening for issue #3.
 
-- Replaced the single external health-check dependency with three ordered HTTPS targets: Google gstatic, Cloudflare and Apple.
+- Replaced the single external health-check dependency with three ordered HTTPS targets: Google gstatic, Apple and Mozilla.
 - Added short-circuit probing: later targets are contacted only when all earlier targets fail.
-- Kept Google and Cloudflare checks on HTTP 204; Apple requires HTTP 200 plus a response body containing `Success`.
+- Kept Google on HTTP 204; Apple requires HTTP 200 plus `Success`, while Mozilla requires HTTP 200 plus `success` in the response body.
+- Selected the final default target set after real-router endpoint validation on both AWG tunnels; a Cloudflare candidate was dropped after timing out through both test VPNs.
 - A composite health-check fails only when all three targets fail; the existing 3-failure debounce threshold remains unchanged.
 - Applied the same composite check to the active VPN, reserve confirmation, post-switch verification and recovery checks.
 - Added the successful target name to `status`, `test` and `check` output, with compact per-target failure details when all targets fail.

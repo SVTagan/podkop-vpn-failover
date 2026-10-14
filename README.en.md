@@ -26,7 +26,7 @@ I have not personally tested this version on a real OpenWrt 25.12 router yet. Th
 
 - automatically discovers `awg*` interfaces using the `amneziawg` protocol;
 - checks real HTTPS traffic instead of relying on an AWG handshake;
-- tries independent Google → Cloudflare → Apple health targets in order and stops after the first successful response;
+- tries independent Google → Apple → Mozilla health targets in order and stops after the first successful response;
 - requires 3 consecutive failures before failover;
 - confirms a reserve with 2 successful checks;
 - changes `podkop.main.interface` and reloads Podkop normally;
@@ -68,8 +68,8 @@ The check uses real HTTPS traffic bound to a specific interface through `curl --
 Version 0.1.5 uses a small ordered set of independent health targets:
 
 1. `https://www.gstatic.com/generate_204` — expects HTTP `204`;
-2. `https://cp.cloudflare.com/generate_204` — expects HTTP `204`;
-3. `https://captive.apple.com/hotspot-detect.html` — expects HTTP `200` and a response body containing `Success`.
+2. `https://captive.apple.com/hotspot-detect.html` — expects HTTP `200` and a response body containing `Success`;
+3. `https://detectportal.firefox.com/success.txt` — expects HTTP `200` and a response body containing `success`.
 
 Targets are tried sequentially and probing stops at the first success. In the normal case, when `gstatic` works, each cycle still sends only one request. Only failure of all three targets counts as one failed health-check attempt toward the existing `FAIL_THRESHOLD`.
 
@@ -150,7 +150,7 @@ Reserve VPNs can be added or removed normally under `Network → Interfaces`; th
 ## Default behavior
 
 - active VPN check: every 30 seconds;
-- health targets: `gstatic` → `cloudflare` → `apple`, short-circuiting after the first success;
+- health targets: `gstatic` → `apple` → `mozilla`, short-circuiting after the first success;
 - failure threshold: 3 failed checks;
 - reserve confirmation: 2 successful checks;
 - quarantine: 180 seconds;

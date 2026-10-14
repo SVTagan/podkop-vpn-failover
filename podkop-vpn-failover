@@ -14,9 +14,10 @@ INTERFACE_PREFIX="awg"
 # Health-check settings. Targets are tried in order and probing stops after
 # the first successful target.
 GSTATIC_URL="https://www.gstatic.com/generate_204"
-CLOUDFLARE_URL="https://cp.cloudflare.com/generate_204"
 APPLE_URL="https://captive.apple.com/hotspot-detect.html"
 APPLE_BODY_TOKEN="Success"
+MOZILLA_URL="https://detectportal.firefox.com/success.txt"
+MOZILLA_BODY_TOKEN="success"
 CHECK_INTERVAL=30
 CONNECT_TIMEOUT=5
 MAX_TIME=10
@@ -253,12 +254,12 @@ probe_interface() {
     fi
     append_probe_failure
 
-    if probe_target "$iface" "cloudflare" "$CLOUDFLARE_URL" "204"; then
+    if probe_target "$iface" "apple" "$APPLE_URL" "200" "$APPLE_BODY_TOKEN"; then
         return 0
     fi
     append_probe_failure
 
-    if probe_target "$iface" "apple" "$APPLE_URL" "200" "$APPLE_BODY_TOKEN"; then
+    if probe_target "$iface" "mozilla" "$MOZILLA_URL" "200" "$MOZILLA_BODY_TOKEN"; then
         return 0
     fi
     append_probe_failure
@@ -518,7 +519,7 @@ run_daemon() {
     reset_failure_counter
     clear_no_reserve_cooldown
     startup_until=$(( $(now_epoch) + STARTUP_GRACE_PERIOD ))
-    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} startup_grace=${STARTUP_GRACE_PERIOD}s no_reserve_retry=${NO_RESERVE_RETRY_INTERVAL}s targets=gstatic,cloudflare,apple"
+    log_msg notice "Started v${VERSION}; interval=${CHECK_INTERVAL}s threshold=${FAIL_THRESHOLD} startup_grace=${STARTUP_GRACE_PERIOD}s no_reserve_retry=${NO_RESERVE_RETRY_INTERVAL}s targets=gstatic,apple,mozilla"
 
     while :; do
         now="$(now_epoch)"
@@ -769,9 +770,9 @@ print_interfaces() {
 
 print_health_targets() {
     say "Health targets:"
-    say "  gstatic:    ${GSTATIC_URL} -> HTTP 204"
-    say "  cloudflare: ${CLOUDFLARE_URL} -> HTTP 204"
-    say "  apple:      ${APPLE_URL} -> HTTP 200 + body contains '${APPLE_BODY_TOKEN}'"
+    say "  gstatic: ${GSTATIC_URL} -> HTTP 204"
+    say "  apple:   ${APPLE_URL} -> HTTP 200 + body contains '${APPLE_BODY_TOKEN}'"
+    say "  mozilla: ${MOZILLA_URL} -> HTTP 200 + body contains '${MOZILLA_BODY_TOKEN}'"
 }
 
 show_status() {
@@ -839,9 +840,10 @@ show_config() {
 Podkop VPN Failover v${VERSION}
 INTERFACE_PREFIX=${INTERFACE_PREFIX}
 GSTATIC_URL=${GSTATIC_URL}
-CLOUDFLARE_URL=${CLOUDFLARE_URL}
 APPLE_URL=${APPLE_URL}
 APPLE_BODY_TOKEN=${APPLE_BODY_TOKEN}
+MOZILLA_URL=${MOZILLA_URL}
+MOZILLA_BODY_TOKEN=${MOZILLA_BODY_TOKEN}
 CHECK_INTERVAL=${CHECK_INTERVAL}
 CONNECT_TIMEOUT=${CONNECT_TIMEOUT}
 MAX_TIME=${MAX_TIME}

@@ -26,7 +26,7 @@
 
 - автоматически находит интерфейсы `awg*` с протоколом `amneziawg`;
 - считает VPN рабочим только если через него проходит реальный HTTPS-запрос;
-- последовательно проверяет независимые health targets Google → Cloudflare → Apple и останавливается на первом успешном ответе;
+- последовательно проверяет независимые health targets Google → Apple → Mozilla и останавливается на первом успешном ответе;
 - ждёт 3 ошибки подряд, чтобы не переключаться из-за краткого сбоя;
 - перед переключением дважды проверяет резервный VPN;
 - переключает `podkop.main.interface` и делает штатный reload Podkop;
@@ -68,8 +68,8 @@ awg10
 В 0.1.5 используется небольшой упорядоченный набор независимых health targets:
 
 1. `https://www.gstatic.com/generate_204` — ожидается HTTP `204`;
-2. `https://cp.cloudflare.com/generate_204` — ожидается HTTP `204`;
-3. `https://captive.apple.com/hotspot-detect.html` — ожидается HTTP `200`, а тело ответа должно содержать `Success`.
+2. `https://captive.apple.com/hotspot-detect.html` — ожидается HTTP `200`, а тело ответа должно содержать `Success`;
+3. `https://detectportal.firefox.com/success.txt` — ожидается HTTP `200`, а тело ответа должно содержать `success`.
 
 Проверка идёт последовательно и прекращается после первого успешного target. Поэтому в нормальном состоянии, когда отвечает `gstatic`, остаётся один запрос на цикл — как и раньше. Только отказ всех трёх targets считается одной неудачной health-check попыткой для существующего счётчика `FAIL_THRESHOLD`.
 
@@ -150,7 +150,7 @@ podkop-vpn-failover-control start
 ## Логика по умолчанию
 
 - проверка текущего VPN: каждые 30 секунд;
-- health targets: `gstatic` → `cloudflare` → `apple`, short-circuit после первого успеха;
+- health targets: `gstatic` → `apple` → `mozilla`, short-circuit после первого успеха;
 - отказ: 3 неудачные проверки подряд;
 - подтверждение резерва: 2 успешные проверки;
 - quarantine упавшего интерфейса: 180 секунд;
