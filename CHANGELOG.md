@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4 - unreleased
+
+OpenWrt 25.12 installer compatibility update. Failover runtime behavior is unchanged.
+
+- Added automatic package-manager detection: `apk` when available, otherwise `opkg`.
+- Added package-manager wrappers for installed-package checks, package index updates and package installation.
+- Added OpenWrt 25.12/`apk` support for the installer while preserving the existing OpenWrt 24.10/`opkg` path.
+- Kept first-install safety behavior unchanged: service stopped and autostart disabled until manually verified.
+- Kept update behavior unchanged: existing running/stopped and autostart state is preserved.
+- Added test-branch installation instructions and explicitly marked OpenWrt 25.12 real-device validation as pending.
+
 ## 0.1.3 - 2026-08-08
 
 Correct runtime readiness detection for Podkop.
