@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.5 - unreleased
+
+Health-check fallback hardening for issue #3.
+
+- Replaced the single external health-check dependency with three ordered HTTPS targets: Google gstatic, Cloudflare and Apple.
+- Added short-circuit probing: later targets are contacted only when all earlier targets fail.
+- Kept Google and Cloudflare checks on HTTP 204; Apple requires HTTP 200 plus a response body containing `Success`.
+- A composite health-check fails only when all three targets fail; the existing 3-failure debounce threshold remains unchanged.
+- Applied the same composite check to the active VPN, reserve confirmation, post-switch verification and recovery checks.
+- Added the successful target name to `status`, `test` and `check` output, with compact per-target failure details when all targets fail.
+- Kept interface binding, IPv4-only probing, TLS verification, redirect behavior and existing timeout values unchanged.
+
 ## 0.1.4 - 2026-10-14
 
 OpenWrt 25.12 installer compatibility update. Failover runtime behavior is unchanged.
