@@ -10,7 +10,17 @@ This is an independent project. It is not part of Podkop and is not affiliated w
 
 ## Status
 
-Current version: **0.1.3**.
+Current version: **0.1.4**.
+
+### OpenWrt 25.12 / apk
+
+By popular request, **OpenWrt 25.12 support with the `apk` package manager** has been added. OpenWrt 24.10 and older compatible builds using `opkg` remain supported.
+
+The change is limited to the installer: it automatically detects the available package manager and uses it to check/install `curl` and `luci-app-commands`. The failover runtime logic is unchanged in 0.1.4.
+
+The `0.1.3 → 0.1.4` update was tested on a real OpenWrt 24.10.5 router: `opkg` was detected correctly, running/autostart state was preserved, the service recovered normally, and both AWG interfaces passed HTTPS health checks.
+
+I have not personally tested this version on a real OpenWrt 25.12 router yet. The `apk` support follows the current OpenWrt 25.12 CLI model and still needs confirmation on real 25.12 hardware.
 
 ## What it does
 
@@ -70,7 +80,7 @@ Tested on several real routers:
 
 The main full-test setup uses Podkop 0.7.21, sing-box 1.12.22 and AmneziaWG.
 
-The current installer is intended for OpenWrt systems using `opkg`. Podkop must use VPN mode and the AmneziaWG interfaces must be named `awg*`.
+The 0.1.4 installer supports OpenWrt systems using either `opkg` or `apk` and detects the available package manager automatically. Podkop must use VPN mode and the AmneziaWG interfaces must be named `awg*`. OpenWrt 25.12 has not yet been personally verified on a real router.
 
 ## Installation
 
@@ -211,7 +221,7 @@ This project currently targets the original use case:
 - IPv4 health checks;
 - one external health-check URL: `www.gstatic.com/generate_204`;
 - settings are built into the shell script;
-- installer targets `opkg`.
+- installer support through `apk` on OpenWrt 25.12 is implemented but has not yet been personally verified on a real router.
 
 Support for multiple independent health-check endpoints is tracked as a [possible future improvement](https://github.com/SVTagan/podkop-vpn-failover/issues/3).
 

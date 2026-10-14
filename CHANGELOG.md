@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4 - 2026-10-14
+
+OpenWrt 25.12 installer compatibility update. Failover runtime behavior is unchanged.
+
+- Added automatic package-manager detection: `apk` when available, otherwise `opkg`.
+- Added package-manager wrappers for installed-package checks, package index updates and package installation.
+- Added OpenWrt 25.12/`apk` support for the installer while preserving the existing OpenWrt 24.10/`opkg` path.
+- Kept first-install safety behavior unchanged: service stopped and autostart disabled until manually verified.
+- Kept update behavior unchanged: existing running/stopped and autostart state is preserved.
+- Regression-tested the `0.1.3 -> 0.1.4` update path on Xiaomi Redmi AX6000 / OpenWrt 24.10.5: `opkg` detection, service/autostart preservation, restart and AWG HTTPS health checks remained normal.
+- OpenWrt 25.12 / `apk` support is implemented against the current package-manager CLI, but has not yet been personally verified on a real 25.12 router.
+
 ## 0.1.3 - 2026-08-08
 
 Correct runtime readiness detection for Podkop.
