@@ -85,32 +85,41 @@ awg10
 
 ## Установка
 
-Скачать и запустить установщик можно любым доступным способом.
+Обычная установка привязана к текущему стабильному Release `v0.1.5`. Ветка `main` используется для дальнейшей разработки и не является рекомендуемым источником для обычной установки.
 
 Через `uclient-fetch`:
 
 ```sh
-uclient-fetch -q -O /tmp/pvf-install.sh \
-  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh && \
-sh /tmp/pvf-install.sh
+PVF_RELEASE='v0.1.5'
+PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+
+uclient-fetch -q -O /tmp/pvf-install.sh "$PVF_BASE_URL/install.sh" && \
+PVF_BASE_URL="$PVF_BASE_URL" sh /tmp/pvf-install.sh
 ```
 
 Через `curl`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh \
-  -o /tmp/pvf-install.sh && sh /tmp/pvf-install.sh
+PVF_RELEASE='v0.1.5'
+PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+
+curl -fsSL "$PVF_BASE_URL/install.sh" -o /tmp/pvf-install.sh && \
+PVF_BASE_URL="$PVF_BASE_URL" sh /tmp/pvf-install.sh
 ```
 
 Через `wget`:
 
 ```sh
-wget -q -O /tmp/pvf-install.sh \
-  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/install.sh && \
-sh /tmp/pvf-install.sh
+PVF_RELEASE='v0.1.5'
+PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+
+wget -q -O /tmp/pvf-install.sh "$PVF_BASE_URL/install.sh" && \
+PVF_BASE_URL="$PVF_BASE_URL" sh /tmp/pvf-install.sh
 ```
 
-Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис. Для загрузки своих файлов он умеет использовать `curl`, `uclient-fetch` или `wget`.
+Так все файлы одной установки берутся из одного и того же release tag. Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис. Для загрузки своих файлов он умеет использовать `curl`, `uclient-fetch` или `wget`.
+
+Переменная `PVF_BASE_URL` остаётся техническим override для разработки и тестов из конкретной ветки или commit; для обычной установки менять её не нужно.
 
 ### После первой установки
 
@@ -187,28 +196,35 @@ logread | grep podkop-vpn-failover
 
 ## Удаление
 
-Как и при установке, `uninstall.sh` можно скачать любым доступным способом.
+Для удаления используется `uninstall.sh` из того же стабильного Release `v0.1.5`.
 
 Через `uclient-fetch`:
 
 ```sh
-uclient-fetch -q -O /tmp/pvf-uninstall.sh \
-  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
+PVF_RELEASE='v0.1.5'
+PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+
+uclient-fetch -q -O /tmp/pvf-uninstall.sh "$PVF_BASE_URL/uninstall.sh" && \
 sh /tmp/pvf-uninstall.sh
 ```
 
 Через `curl`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh \
-  -o /tmp/pvf-uninstall.sh && sh /tmp/pvf-uninstall.sh
+PVF_RELEASE='v0.1.5'
+PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+
+curl -fsSL "$PVF_BASE_URL/uninstall.sh" -o /tmp/pvf-uninstall.sh && \
+sh /tmp/pvf-uninstall.sh
 ```
 
 Через `wget`:
 
 ```sh
-wget -q -O /tmp/pvf-uninstall.sh \
-  https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main/uninstall.sh && \
+PVF_RELEASE='v0.1.5'
+PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+
+wget -q -O /tmp/pvf-uninstall.sh "$PVF_BASE_URL/uninstall.sh" && \
 sh /tmp/pvf-uninstall.sh
 ```
 

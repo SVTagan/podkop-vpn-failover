@@ -48,6 +48,17 @@ jobs:
             exit 1
           fi
 
+          installer_version="$(sed -n 's/^INSTALLER_VERSION="\([^"]*\)".*/\1/p' install.sh | head -n 1)"
+          if [[ -z "${installer_version}" ]]; then
+            echo "Cannot determine INSTALLER_VERSION from install.sh." >&2
+            exit 1
+          fi
+
+          if [[ "${installer_version}" != "${version}" ]]; then
+            echo "install.sh version ${installer_version} does not match podkop-vpn-failover version ${version}." >&2
+            exit 1
+          fi
+
           expected_tag="v${version}"
           if [[ "${RELEASE_TAG}" != "${expected_tag}" ]]; then
             echo "Release tag ${RELEASE_TAG} does not match podkop-vpn-failover version ${version}. Expected ${expected_tag}." >&2
@@ -76,6 +87,21 @@ jobs:
 
           grep -Fq "Current version: **${VERSION}**" README.en.md || {
             echo "README.en.md version does not match ${VERSION}." >&2
+            exit 1
+          }
+
+          grep -Fq "DEFAULT_REF=\"v\${INSTALLER_VERSION}\"" install.sh || {
+            echo "install.sh is not pinned to its matching release tag." >&2
+            exit 1
+          }
+
+          grep -Fq "PVF_RELEASE='v${VERSION}'" README.md || {
+            echo "README.md installation examples are not pinned to v${VERSION}." >&2
+            exit 1
+          }
+
+          grep -Fq "PVF_RELEASE='v${VERSION}'" README.en.md || {
+            echo "README.en.md installation examples are not pinned to v${VERSION}." >&2
             exit 1
           }
 

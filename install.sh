@@ -3,7 +3,12 @@
 set -u
 
 TAG="podkop-vpn-failover"
-BASE_URL="${PVF_BASE_URL:-https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/main}"
+INSTALLER_VERSION="0.1.5"
+DEFAULT_REF="v${INSTALLER_VERSION}"
+
+# Normal installs are pinned to the matching release tag. PVF_BASE_URL is kept
+# as an explicit override for development/testing from a branch or commit.
+BASE_URL="${PVF_BASE_URL:-https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${DEFAULT_REF}}"
 WORKER_DST="/usr/bin/podkop-vpn-failover"
 CONTROL_DST="/usr/bin/podkop-vpn-failover-control"
 INIT_DST="/etc/init.d/podkop-vpn-failover"
