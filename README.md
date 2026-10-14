@@ -10,7 +10,47 @@
 
 ## Статус
 
-Текущая версия: **0.1.3**.
+Текущая тестовая версия в этой ветке: **0.1.4**.
+
+### Тестовая поддержка OpenWrt 25.12
+
+По просьбе трудящихся добавлена **поддержка OpenWrt 25.12 с пакетным менеджером `apk`**. Поддержка OpenWrt 24.10 и более старых совместимых сборок с `opkg` сохранена.
+
+Изменение касается установщика: он автоматически определяет доступный пакетный менеджер и через него проверяет/устанавливает `curl` и `luci-app-commands`. Runtime-логика failover в версии 0.1.4 не менялась.
+
+На реальном OpenWrt 25.12 эта ветка пока не проверена. Перед слиянием в `main` сначала выполняется регрессионная проверка на OpenWrt 24.10, затем желательно тестирование на реальном 25.12.
+
+#### Установка тестовой версии 0.1.4
+
+Для теста используется отдельная ветка `compat-openwrt-25.12-apk`; стабильная ветка `main` при этом не затрагивается.
+
+Через `uclient-fetch`:
+
+```sh
+PVF_TEST_BASE='https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/compat-openwrt-25.12-apk'
+uclient-fetch -q -O /tmp/pvf-install.sh "$PVF_TEST_BASE/install.sh" && \
+PVF_BASE_URL="$PVF_TEST_BASE" sh /tmp/pvf-install.sh
+```
+
+Через `curl`:
+
+```sh
+PVF_TEST_BASE='https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/compat-openwrt-25.12-apk'
+curl -fsSL "$PVF_TEST_BASE/install.sh" -o /tmp/pvf-install.sh && \
+PVF_BASE_URL="$PVF_TEST_BASE" sh /tmp/pvf-install.sh
+```
+
+В начале установки должно появиться `Detected package manager: opkg` на OpenWrt 24.10 или `Detected package manager: apk` на OpenWrt 25.12.
+
+После установки/обновления проверить:
+
+```sh
+podkop-vpn-failover version
+podkop-vpn-failover test
+podkop-vpn-failover status
+```
+
+При обновлении существующей установки состояние сервиса и autostart должно сохраниться.
 
 ## Что умеет
 
@@ -70,7 +110,7 @@ curl --interface awg0 -4 https://www.gstatic.com/generate_204
 
 Основной стенд полного тестирования: Podkop 0.7.21, sing-box 1.12.22 и AmneziaWG.
 
-Текущий установщик рассчитан на OpenWrt с `opkg`. Для работы нужен Podkop в VPN-режиме и интерфейсы AmneziaWG с именами `awg*`.
+Тестовый установщик 0.1.4 поддерживает OpenWrt с `opkg` и `apk`, автоматически выбирая доступный пакетный менеджер. Для работы нужен Podkop в VPN-режиме и интерфейсы AmneziaWG с именами `awg*`. Поддержка OpenWrt 25.12 пока требует подтверждения на реальном устройстве.
 
 ## Установка
 
@@ -211,7 +251,7 @@ sh /tmp/pvf-uninstall.sh
 - IPv4 health-check;
 - один внешний health-check URL — `www.gstatic.com/generate_204`;
 - настройки пока встроены в shell-скрипт, отдельной формы LuCI нет;
-- установщик рассчитан на `opkg`.
+- поддержка установщика через `apk` для OpenWrt 25.12 пока не подтверждена на реальном устройстве.
 
 Поддержка нескольких независимых health-check URL оставлена как [отдельная будущая доработка](https://github.com/SVTagan/podkop-vpn-failover/issues/3).
 
