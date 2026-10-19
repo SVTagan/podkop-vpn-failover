@@ -3,7 +3,7 @@
 # podkop-vpn-failover
 # Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
 
-VERSION="0.1.5"
+VERSION="0.1.6-stage2"
 TAG="podkop-vpn-failover"
 
 # Interfaces are discovered automatically from /etc/config/network.
@@ -25,6 +25,7 @@ FAIL_THRESHOLD=3
 CANDIDATE_SUCCESS_THRESHOLD=2
 CANDIDATE_RETRY_DELAY=1
 POST_SWITCH_DELAY=4
+POST_SWITCH_RUNTIME_WAIT=6
 
 # Give OpenWrt, Podkop and the VPN interfaces time to settle after this daemon
 # starts. No automatic failover is allowed during this window.
@@ -85,6 +86,17 @@ now_epoch() {
 
 podkop_runtime_ready() {
     "$SING_BOX_INIT" running >/dev/null 2>&1 && [ -r "$SING_BOX_CONFIG" ]
+}
+
+wait_podkop_runtime_ready() {
+    local remaining="$POST_SWITCH_RUNTIME_WAIT"
+
+    while :; do
+        podkop_runtime_ready && return 0
+        [ "$remaining" -le 0 ] && return 1
+        sleep 1
+        remaining=$((remaining - 1))
+    done
 }
 
 get_connection_type() {
@@ -385,6 +397,13 @@ switch_to_interface() {
         return 2
     fi
 
+    if ! wait_podkop_runtime_ready; then
+        log_msg err "Podkop runtime is not ready after selecting ${to}; restoring ${from}"
+        restore_interface "$from" >/dev/null 2>&1
+        mark_quarantine "$to"
+        return 1
+    fi
+
     if ! verify_podkop_binding "$to"; then
         log_msg err "Podkop did not bind main-out to ${to}; restoring ${from}"
         restore_interface "$from" >/dev/null 2>&1
@@ -399,6 +418,19 @@ switch_to_interface() {
             return 2
         fi
         log_msg err "Post-switch health-check failed for ${to}; restoring ${from}"
+        restore_interface "$from" >/dev/null 2>&1
+        mark_quarantine "$to"
+        return 1
+    fi
+
+    current="$(get_current_interface)"
+    if [ "$current" != "$to" ]; then
+        log_msg notice "Podkop VPN changed externally during final post-switch validation (${to} -> ${current:-unset}); leaving external selection untouched"
+        return 2
+    fi
+
+    if ! podkop_runtime_ready; then
+        log_msg err "Podkop runtime became not ready after validating ${to}; restoring ${from}"
         restore_interface "$from" >/dev/null 2>&1
         mark_quarantine "$to"
         return 1
@@ -851,6 +883,7 @@ FAIL_THRESHOLD=${FAIL_THRESHOLD}
 CANDIDATE_SUCCESS_THRESHOLD=${CANDIDATE_SUCCESS_THRESHOLD}
 CANDIDATE_RETRY_DELAY=${CANDIDATE_RETRY_DELAY}
 POST_SWITCH_DELAY=${POST_SWITCH_DELAY}
+POST_SWITCH_RUNTIME_WAIT=${POST_SWITCH_RUNTIME_WAIT}
 STARTUP_GRACE_PERIOD=${STARTUP_GRACE_PERIOD}
 NO_RESERVE_RETRY_INTERVAL=${NO_RESERVE_RETRY_INTERVAL}
 QUARANTINE_SECONDS=${QUARANTINE_SECONDS}
