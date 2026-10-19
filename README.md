@@ -10,13 +10,19 @@
 
 ## Статус
 
-Текущая версия: **0.1.5**.
+Текущая версия: **0.1.6**.
 
 ### OpenWrt 25.12 / apk
 
 Начиная с 0.1.4 установщик поддерживает оба пакетных менеджера OpenWrt: `opkg` на 24.10 и более старых совместимых версиях и `apk` на 25.12 и новее. Доступный менеджер определяется автоматически и используется для проверки/установки `curl` и `luci-app-commands`.
 
 Путь `opkg` проверен на реальных OpenWrt 24.10.x. Поддержка `apk` реализована по текущей CLI-модели OpenWrt 25.12, но на реальном устройстве с 25.12 автором пока лично не проверялась.
+
+### Надёжность 0.1.6
+
+Версия 0.1.6 усиливает уже существующий failover без добавления новых режимов работы: после переключения скрипт теперь отдельно подтверждает, что runtime Podkop/sing-box действительно поднялся и остаётся готовым перед фиксацией успешного failover.
+
+Установщик также стал транзакционным для трёх файлов проекта: новая версия заранее подготавливается и проверяется, состояние running/autostart сохраняется, а при частичной замене или неудачном запуске обновления предыдущие файлы и состояние сервиса автоматически восстанавливаются.
 
 ## Что умеет
 
@@ -26,7 +32,7 @@
 - ждёт 3 ошибки подряд, чтобы не переключаться из-за краткого сбоя;
 - перед переключением дважды проверяет резервный VPN;
 - переключает `podkop.main.interface` и делает штатный reload Podkop;
-- проверяет новый `main-out.bind_interface` и сам туннель после переключения;
+- после переключения проверяет runtime Podkop/sing-box, новый `main-out.bind_interface` и сам туннель;
 - временно помещает недавно упавший VPN в quarantine;
 - не возвращается автоматически на прежний VPN, пока текущий работает;
 - после полного отказа всего пула не перебирает все VPN непрерывно;
@@ -61,7 +67,7 @@ awg10
 
 Проверяется не handshake AmneziaWG, а реальный HTTPS-трафик, привязанный к конкретному интерфейсу через `curl --interface <awg*> -4`.
 
-В 0.1.5 используется небольшой упорядоченный набор независимых health targets:
+Начиная с 0.1.5 используется небольшой упорядоченный набор независимых health targets:
 
 1. `https://www.gstatic.com/generate_204` — ожидается HTTP `204`;
 2. `https://captive.apple.com/hotspot-detect.html` — ожидается HTTP `200`, а тело ответа должно содержать `Success`;
@@ -85,41 +91,44 @@ awg10
 
 ## Установка
 
-Обычная установка привязана к текущему стабильному Release `v0.1.5`. Ветка `main` используется для дальнейшей разработки и не является рекомендуемым источником для обычной установки.
+Обычная установка привязана к текущему стабильному Release `v0.1.6`. Ветка `main` используется для дальнейшей разработки и не является рекомендуемым источником для обычной установки.
 
 Через `uclient-fetch`:
 
 ```sh
-PVF_RELEASE='v0.1.5'
-PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+PVF_RELEASE='v0.1.6'
 
-uclient-fetch -q -O /tmp/pvf-install.sh "$PVF_BASE_URL/install.sh" && \
-PVF_BASE_URL="$PVF_BASE_URL" sh /tmp/pvf-install.sh
+uclient-fetch -q -O /tmp/pvf-install.sh \
+  "https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}/install.sh" && \
+sh /tmp/pvf-install.sh
 ```
 
 Через `curl`:
 
 ```sh
-PVF_RELEASE='v0.1.5'
-PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+PVF_RELEASE='v0.1.6'
 
-curl -fsSL "$PVF_BASE_URL/install.sh" -o /tmp/pvf-install.sh && \
-PVF_BASE_URL="$PVF_BASE_URL" sh /tmp/pvf-install.sh
+curl -fsSL \
+  "https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}/install.sh" \
+  -o /tmp/pvf-install.sh && \
+sh /tmp/pvf-install.sh
 ```
 
 Через `wget`:
 
 ```sh
-PVF_RELEASE='v0.1.5'
-PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+PVF_RELEASE='v0.1.6'
 
-wget -q -O /tmp/pvf-install.sh "$PVF_BASE_URL/install.sh" && \
-PVF_BASE_URL="$PVF_BASE_URL" sh /tmp/pvf-install.sh
+wget -q -O /tmp/pvf-install.sh \
+  "https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}/install.sh" && \
+sh /tmp/pvf-install.sh
 ```
 
-Так все файлы одной установки берутся из одного и того же release tag. Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис. Для загрузки своих файлов он умеет использовать `curl`, `uclient-fetch` или `wget`.
+Начиная с 0.1.6 сам установщик по умолчанию закреплён за своим release tag и загружает worker/control/init именно из него. Поэтому обычная установка не зависит от текущего состояния `main`.
 
-Переменная `PVF_BASE_URL` остаётся техническим override для разработки и тестов из конкретной ветки или commit; для обычной установки менять её не нужно.
+Сам установщик при необходимости ставит `curl`, по умолчанию устанавливает/настраивает `luci-app-commands` и добавляет procd-сервис. Для загрузки своих файлов он умеет использовать `curl`, `uclient-fetch` или `wget`.
+
+Переменная `PVF_BASE_URL` остаётся техническим override только для разработки и тестов из конкретной ветки или commit.
 
 ### После первой установки
 
@@ -196,35 +205,36 @@ logread | grep podkop-vpn-failover
 
 ## Удаление
 
-Для удаления используется `uninstall.sh` из того же стабильного Release `v0.1.5`.
+Для удаления используется `uninstall.sh` из того же стабильного Release `v0.1.6`.
 
 Через `uclient-fetch`:
 
 ```sh
-PVF_RELEASE='v0.1.5'
-PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+PVF_RELEASE='v0.1.6'
 
-uclient-fetch -q -O /tmp/pvf-uninstall.sh "$PVF_BASE_URL/uninstall.sh" && \
+uclient-fetch -q -O /tmp/pvf-uninstall.sh \
+  "https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}/uninstall.sh" && \
 sh /tmp/pvf-uninstall.sh
 ```
 
 Через `curl`:
 
 ```sh
-PVF_RELEASE='v0.1.5'
-PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+PVF_RELEASE='v0.1.6'
 
-curl -fsSL "$PVF_BASE_URL/uninstall.sh" -o /tmp/pvf-uninstall.sh && \
+curl -fsSL \
+  "https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}/uninstall.sh" \
+  -o /tmp/pvf-uninstall.sh && \
 sh /tmp/pvf-uninstall.sh
 ```
 
 Через `wget`:
 
 ```sh
-PVF_RELEASE='v0.1.5'
-PVF_BASE_URL="https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}"
+PVF_RELEASE='v0.1.6'
 
-wget -q -O /tmp/pvf-uninstall.sh "$PVF_BASE_URL/uninstall.sh" && \
+wget -q -O /tmp/pvf-uninstall.sh \
+  "https://raw.githubusercontent.com/SVTagan/podkop-vpn-failover/${PVF_RELEASE}/uninstall.sh" && \
 sh /tmp/pvf-uninstall.sh
 ```
 
@@ -248,6 +258,8 @@ sh /tmp/pvf-uninstall.sh
 На втором Cudy TR3000 с OpenWrt 24.10.4 дополнительно подтверждены штатная установка и запуск, procd/autostart, startup grace и реальные HTTPS health-check.
 
 На Xiaomi Redmi AX6000 / OpenWrt 24.10.5 для 0.1.5 отдельно проверены все три health targets, fallback на Apple и Mozilla, корректный полный отказ всех targets, реальный failover `awg0 → awg0_2` при блокировке UDP-транспорта активного туннеля и восстановление `awg0` без автоматического переключения обратно.
+
+Для 0.1.6 на том же роутере дополнительно проверены post-switch runtime validation при реальном failover, обновление с сохранением состояний RUNNING+ENABLED и STOPPED+DISABLED, автоматический rollback после частичной замены файлов и после неудачного запуска новой версии, настоящий first install, LuCI-команды, uninstall/reinstall и отсутствие смешанных/оставшихся временных файлов после rollback.
 
 История изменений: [CHANGELOG.md](CHANGELOG.md).
 

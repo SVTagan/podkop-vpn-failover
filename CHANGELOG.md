@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.6 - 2026-10-20
+
+Reliability hardening for post-switch validation and installer recovery.
+
+- Added a bounded post-switch Podkop/sing-box runtime readiness check before binding and tunnel validation.
+- Kept the existing 4-second post-switch stabilization delay and added up to 6 seconds of runtime recovery allowance so a normal procd respawn window is not treated as an immediate failure.
+- Re-check the selected Podkop interface and runtime before recording a failover as successful.
+- Kept the existing VPN-switch rollback semantics unchanged; verified rollback redesign is intentionally deferred to a later version.
+- Reworked the installer into a transaction for the worker, control wrapper and init script.
+- Downloaded files are validated before replacement, staged on the destination filesystems and activated with same-filesystem renames.
+- Added backups and automatic restoration of the previous three files and running/autostart state after partial replacement or a failed updated-service startup.
+- Confirm that the old failover daemon is actually stopped before replacing files.
+- Preserve independent running/enabled combinations on updates; first install remains stopped and disabled.
+- Added installer/worker version matching and release self-pinning so normal 0.1.6 installs fetch all project files from the same `v0.1.6` tag instead of `main`.
+- Moved LuCI package/UCI integration outside the core file/service transaction.
+- Real-router validation on Xiaomi Redmi AX6000 / OpenWrt 24.10.5 covered real failover with the new runtime validation, successful RUNNING+ENABLED and STOPPED+DISABLED updates, injected partial-replacement rollback, injected service-start rollback, first install, LuCI entries, uninstall/reinstall and cleanup/no-mixed-file verification.
+
 ## 0.1.5 - 2026-10-15
 
 Health-check fallback hardening.

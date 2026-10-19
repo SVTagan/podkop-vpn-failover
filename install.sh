@@ -3,7 +3,7 @@
 set -u
 
 TAG="podkop-vpn-failover"
-INSTALLER_VERSION="0.1.6-stage2"
+INSTALLER_VERSION="0.1.6"
 DEFAULT_REF="v${INSTALLER_VERSION}"
 
 # Normal installs are pinned to the matching release tag. PVF_BASE_URL is kept

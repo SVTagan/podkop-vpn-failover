@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag; must match podkop-vpn-failover version, for example v0.1.5'
+        description: 'Release tag; must match podkop-vpn-failover version, for example v0.1.6'
         required: true
-        default: 'v0.1.5'
+        default: 'v0.1.6'
         type: string
       prerelease:
         description: 'Mark this GitHub Release as a prerelease'
@@ -144,7 +144,7 @@ jobs:
             echo
             echo "GitHub Release проекта podkop-vpn-failover — небольшого helper для OpenWrt/Podkop, который проверяет реальную передачу HTTPS-трафика через AmneziaWG-интерфейсы и автоматически переключает podkop.main.interface на рабочий резерв при устойчивом отказе текущего VPN."
             echo
-            echo "Основная failover-логика полностью проверена на Cudy TR3000 v1 / OpenWrt 24.10.5. Для версии ${VERSION} на Xiaomi Redmi AX6000 / OpenWrt 24.10.5 отдельно проверены fallback health-check на Google/Apple/Mozilla, полный отказ всех targets, реальный failover awg0 -> awg0_2 и восстановление без автоматического switch-back. Поддержка OpenWrt 25.12 / apk реализована, но на реальном 25.12 автором пока лично не проверялась."
+            echo "Основная failover-логика полностью проверена на Cudy TR3000 v1 / OpenWrt 24.10.5. Для версии ${VERSION} на Xiaomi Redmi AX6000 / OpenWrt 24.10.5 дополнительно проверены post-switch runtime validation при реальном failover, transactional update с сохранением service/autostart state, автоматический rollback после частичной замены файлов и после неудачного запуска новой версии, first install и uninstall/reinstall. Поддержка OpenWrt 25.12 / apk реализована, но на реальном 25.12 автором пока лично не проверялась."
             echo
             echo "Проект предоставляется как есть; использование — на свой риск. Перед установкой рекомендуется прочитать README и иметь доступ к роутеру для восстановления конфигурации."
             echo
